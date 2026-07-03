@@ -21,6 +21,7 @@ class DailyTemplateSpec:
     threshold_key: str
     default_threshold: float
     crop: tuple[float, float, float, float] | None = None
+    green_mask: bool = False
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,70 @@ class DailyMatchResult:
 
 
 class DailyTask(BaseBD2Task):
+    status_keys = [
+        "启用",
+        "状态",
+        "当前任务",
+        "执行公会签到",
+        "公会判断",
+        "公会入口",
+        "公会入口模板",
+        "公会入口阈值",
+        "公会签到 loading 状态",
+        "公会签到_loading_appear",
+        "公会签到_loading_gone",
+        "guild_sign_in_early 模板",
+        "guild_sign_in 模板",
+        "公会签到成功",
+        "公会签到成功阈值",
+        "公会签到 OCR",
+        "公会签到返回主页 亮度",
+        "公会签到返回主页结果",
+        "执行小屋签到",
+        "小屋签到 loading 状态",
+        "小屋签到_loading_appear",
+        "小屋签到_loading_gone",
+        "my_home_early",
+        "my_home",
+        "小屋页面检测",
+        "小屋页面阈值",
+        "小屋签到返回主页 亮度",
+        "小屋签到返回主页结果",
+        "执行一键收菜",
+        "business_collect 关键字",
+        "一键收菜弹窗",
+        "一键收菜 OCR",
+        "一键收菜返回主页 亮度",
+        "一键收菜返回主页结果",
+        "加载页面阈值",
+        "主页亮度比例阈值",
+        "日常 OCR 阈值",
+        "loading 出现等待秒数",
+        "loading 消失等待秒数",
+        "公会签到成功等待秒数",
+        "小屋页面等待秒数",
+        "一键收菜菜单等待秒数",
+        "主页确认等待秒数",
+        "完成",
+        "失败",
+        "跳过",
+        "匹配错误",
+        "Log",
+        "Warning",
+        "Error",
+    ]
+    status_key_labels = {
+        "公会签到_loading_appear": "公会 loading 出现",
+        "公会签到_loading_gone": "公会 loading 消失",
+        "guild_sign_in_early 模板": "公会签到成功早期模板",
+        "guild_sign_in 模板": "公会签到成功模板",
+        "小屋签到_loading_appear": "小屋 loading 出现",
+        "小屋签到_loading_gone": "小屋 loading 消失",
+        "my_home_early": "小屋页面早期检测",
+        "my_home": "小屋页面检测分数",
+        "business_collect 关键字": "一键收菜关键字命中",
+    }
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = "日常任务"
@@ -41,6 +106,7 @@ class DailyTask(BaseBD2Task):
         self.group_icon = FluentIcon.CALENDAR
         self.visible = True
         self._templates: dict[str, np.ndarray] = {}
+        self._template_masks: dict[str, np.ndarray | None] = {}
         self._missing_template_names: set[str] = set()
         self._match_error_names: set[str] = set()
         self._match_pause_until = 0.0
@@ -50,8 +116,7 @@ class DailyTask(BaseBD2Task):
                 "执行公会签到": True,
                 "执行小屋签到": True,
                 "执行一键收菜": True,
-                "公会未完成阈值": 0.78,
-                "公会已完成阈值": 0.78,
+                "公会入口阈值": 0.78,
                 "公会签到成功阈值": 0.76,
                 "小屋页面阈值": 0.76,
                 "加载页面阈值": 0.72,
@@ -79,6 +144,12 @@ class DailyTask(BaseBD2Task):
                 HOTKEY_CONFIG_NAME: {"type": "global"},
             }
         )
+
+    def _status_set(self, key: str, value) -> None:
+        try:
+            self.info_set(key, value)
+        except AttributeError:
+            pass
 
     def run(self):
         if not bool(self.config.get("启用", True)):
@@ -131,20 +202,18 @@ class DailyTask(BaseBD2Task):
 
     def run_guild_sign_in(self) -> bool:
         frame = self.capture_frame()
-        guild = self._match(frame, GUILD_TEMPLATE)
-        finished = self._match(frame, GUILD_FINISHED_TEMPLATE)
-        self.info_set("公会未完成", f"{guild.score:.3f}")
-        self.info_set("公会已完成", f"{finished.score:.3f}")
+        guild, guild_spec = self._match_best(frame, GUILD_ENTRY_TEMPLATES)
+        self.info_set("公会入口", f"{guild.score:.3f}")
+        self.info_set("公会入口模板", guild_spec.file_name)
 
-        guild_ready = self._passes(guild, GUILD_TEMPLATE)
-        finished_ready = self._passes(finished, GUILD_FINISHED_TEMPLATE)
-        if finished_ready and (not guild_ready or finished.score >= guild.score):
-            self.log_info("公会签到：已检测为完成状态，跳过。")
-            return True
+        guild_ready = self._passes(guild, guild_spec)
         if not guild_ready:
-            self.log_info("公会签到：未检测到 guild.png 或 guild-finished.png，不点击公会按钮。")
+            self._status_set("公会判断", "未识别到公会入口")
+            self._status_set("公会签到成功", "否")
+            self.log_info("公会签到：未检测到公会入口模板，不点击公会按钮。")
             return False
 
+        self._status_set("公会判断", "已识别入口，进入公会")
         self._sleep_after_recognition()
         self._click_reference(370, 155, after_sleep=0.5)
         loading_state, success_found, text = self._wait_loading_or_template_or_ocr(
@@ -153,7 +222,9 @@ class DailyTask(BaseBD2Task):
             GUILD_SUCCESS_KEYWORDS,
             name="guild_sign_in_early",
         )
+        self._status_set("公会签到 loading 状态", loading_state)
         if loading_state == "stuck":
+            self._status_set("公会签到成功", "否")
             return False
 
         if not success_found:
@@ -166,6 +237,7 @@ class DailyTask(BaseBD2Task):
                 name="guild_sign_in",
             )
         self.info_set("公会签到 OCR", text or "-")
+        self._status_set("公会签到成功", "是" if success_found else "否")
         if success_found:
             self.log_info("公会签到：检测到签到成功提示。")
             self._sleep_after_recognition()
@@ -174,7 +246,9 @@ class DailyTask(BaseBD2Task):
             self.log_info("公会签到：未检测到签到成功提示，按流程返回主页。")
 
         self._click_reference(100, 50, after_sleep=1.0)
-        return self._wait_home_brightness("公会签到返回主页")
+        home_ok = self._wait_home_brightness("公会签到返回主页")
+        self._status_set("公会签到返回主页结果", "通过" if home_ok else "失败")
+        return home_ok
 
     def run_my_home_sign_in(self) -> bool:
         self._click_reference(166, 158, after_sleep=0.5)
@@ -183,7 +257,9 @@ class DailyTask(BaseBD2Task):
             MY_HOME_TEMPLATE,
             name="my_home_early",
         )
+        self._status_set("小屋签到 loading 状态", loading_state)
         if loading_state == "stuck":
+            self._status_set("小屋页面检测", "否")
             return False
         if loading_state == "loading":
             self.sleep(1.0)
@@ -196,15 +272,19 @@ class DailyTask(BaseBD2Task):
                 timeout=float(self.config.get("小屋页面等待秒数", 12.0)),
                 name="my_home",
             )
+        self._status_set("小屋页面检测", "是" if found else "否")
         if found:
             self.log_info("小屋签到：已进入小屋页面，返回主页。")
             self._sleep_after_recognition()
             self._click_reference(100, 50, after_sleep=1.0)
         else:
             self.log_info("小屋签到：未检测到 my-home.png，不执行返回点击。")
+            self._status_set("小屋签到返回主页结果", "未执行")
             return False
 
-        return self._wait_home_brightness("小屋签到返回主页")
+        home_ok = self._wait_home_brightness("小屋签到返回主页")
+        self._status_set("小屋签到返回主页结果", "通过" if home_ok else "失败")
+        return home_ok
 
     def run_business_collect(self) -> bool:
         self._click_reference(165, 260, after_sleep=1.0)
@@ -221,15 +301,19 @@ class DailyTask(BaseBD2Task):
             name="business_collect",
         )
         self.info_set("一键收菜 OCR", text or "-")
+        self._status_set("一键收菜弹窗", "是" if found else "否")
         if not found:
             self.log_info("一键收菜：未检测到经营管理弹窗关键字，跳过点击。")
+            self._status_set("一键收菜返回主页结果", "未执行")
             return False
 
-        self._sleep_after_recognition()
-        self._click_reference(1090, 814, after_sleep=3.0)
+        self.sleep(0.5)
+        self._click_reference(1090, 814, after_sleep=2.0)
         self._click_reference(832, 814, after_sleep=1.0)
-        self._click_reference(832, 814, after_sleep=1.0)
-        return self._wait_home_brightness("一键收菜返回主页")
+        self._click_reference(832, 814)
+        home_ok = self._wait_home_brightness("一键收菜返回主页")
+        self._status_set("一键收菜返回主页结果", "通过" if home_ok else "失败")
+        return home_ok
 
     def _click_reference(self, x: int, y: int, after_sleep: float = 0.0):
         self.operate_click(
@@ -434,7 +518,15 @@ class DailyTask(BaseBD2Task):
         return False
 
     def _home_brightness_ratio(self, frame) -> float:
-        template = self._load_template(HOME_TEMPLATE)
+        return max(self._home_brightness_ratio_for_template(frame, spec) for spec in HOME_TEMPLATES)
+
+    def _home_brightness_ratio_for_template(
+        self,
+        frame,
+        spec: DailyTemplateSpec,
+    ) -> float:
+        template = self._load_template(spec)
+        mask = self._load_template_mask(spec)
         frame_gray = self._to_gray(frame)
         frame_height, frame_width = frame_gray.shape[:2]
         scale = frame_width / REFERENCE_WIDTH
@@ -451,10 +543,45 @@ class DailyTask(BaseBD2Task):
         if region.size == 0:
             return 0.0
 
-        template_mean = float(np.mean(template))
+        scaled_template = self._resize_template(template, scale)
+        scaled_mask = self._resize_mask(mask, scale)
+        match_height = min(region.shape[0], scaled_template.shape[0])
+        match_width = min(region.shape[1], scaled_template.shape[1])
+        if match_height <= 0 or match_width <= 0:
+            return 0.0
+        region = region[:match_height, :match_width]
+        scaled_template = scaled_template[:match_height, :match_width]
+        if scaled_mask is not None:
+            scaled_mask = scaled_mask[:match_height, :match_width]
+            valid = scaled_mask > 0
+            if not np.any(valid):
+                return 0.0
+            template_mean = float(np.mean(scaled_template[valid]))
+            region_mean = float(np.mean(region[valid]))
+        else:
+            template_mean = float(np.mean(scaled_template))
+            region_mean = float(np.mean(region))
         if template_mean <= 0:
             return 0.0
-        return float(np.mean(region) / template_mean)
+        return float(region_mean / template_mean)
+
+    @staticmethod
+    def _empty_match() -> DailyMatchResult:
+        return DailyMatchResult(score=-1.0, pixel_score=-1.0, position=(0, 0), size=(0, 0))
+
+    def _match_best(
+        self,
+        frame,
+        specs: tuple[DailyTemplateSpec, ...],
+    ) -> tuple[DailyMatchResult, DailyTemplateSpec]:
+        best = self._empty_match()
+        best_spec = specs[0]
+        for spec in specs:
+            result = self._match(frame, spec)
+            if result.score > best.score:
+                best = result
+                best_spec = spec
+        return best, best_spec
 
     def _match(self, frame, spec: DailyTemplateSpec) -> DailyMatchResult:
         empty = DailyMatchResult(score=-1.0, pixel_score=-1.0, position=(0, 0), size=(0, 0))
@@ -463,6 +590,7 @@ class DailyTask(BaseBD2Task):
 
         try:
             template = self._load_template(spec)
+            mask = self._load_template_mask(spec)
         except RuntimeError as exc:
             if spec.name not in self._missing_template_names:
                 self._missing_template_names.add(spec.name)
@@ -477,18 +605,29 @@ class DailyTask(BaseBD2Task):
 
             for scale in self._candidate_scales(base_scale):
                 scaled_template = self._resize_template(template, scale)
+                scaled_mask = self._resize_mask(mask, scale)
                 height, width = scaled_template.shape[:2]
                 if height < 8 or width < 8 or height > frame_height or width > frame_width:
                     continue
 
-                result = cv2.matchTemplate(frame_gray, scaled_template, cv2.TM_CCOEFF_NORMED)
+                if scaled_mask is None:
+                    result = cv2.matchTemplate(frame_gray, scaled_template, cv2.TM_CCOEFF_NORMED)
+                else:
+                    result = cv2.matchTemplate(
+                        frame_gray,
+                        scaled_template,
+                        cv2.TM_CCORR_NORMED,
+                        mask=scaled_mask,
+                    )
                 _, max_value, _, max_location = cv2.minMaxLoc(result)
+                if not np.isfinite(max_value):
+                    continue
                 if max_value > best.score:
                     x, y = int(max_location[0]), int(max_location[1])
                     region = frame_gray[y : y + height, x : x + width]
                     best = DailyMatchResult(
                         score=float(max_value),
-                        pixel_score=self._pixel_similarity(region, scaled_template),
+                        pixel_score=self._pixel_similarity(region, scaled_template, scaled_mask),
                         position=(x, y),
                         size=(int(width), int(height)),
                     )
@@ -507,16 +646,49 @@ class DailyTask(BaseBD2Task):
         if spec.name in self._templates:
             return self._templates[spec.name]
 
+        template, mask = self._read_template_and_mask(spec)
+        self._templates[spec.name] = template
+        self._template_masks[spec.name] = mask
+        return template
+
+    def _load_template_mask(self, spec: DailyTemplateSpec) -> np.ndarray | None:
+        if spec.name not in self._templates:
+            self._load_template(spec)
+        return self._template_masks.get(spec.name)
+
+    def _read_template_and_mask(
+        self,
+        spec: DailyTemplateSpec,
+    ) -> tuple[np.ndarray, np.ndarray | None]:
         path = TEMPLATE_DIR / spec.file_name
-        template = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
-        if template is None:
+        source = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+        if source is None:
             raise RuntimeError(f"日常任务模板不存在或无法读取：{path}")
 
         if spec.crop is not None:
-            template = self._crop_relative(template, spec.crop)
+            source = self._crop_relative(source, spec.crop)
 
-        self._templates[spec.name] = template
-        return template
+        mask = None
+        if len(source.shape) == 2:
+            template = source
+        else:
+            if source.shape[2] == 4:
+                template = cv2.cvtColor(source, cv2.COLOR_BGRA2GRAY)
+            else:
+                template = cv2.cvtColor(source, cv2.COLOR_BGR2GRAY)
+
+            if spec.green_mask:
+                color = source[:, :, :3]
+                green_pixels = (
+                    (color[:, :, 0] <= 4)
+                    & (color[:, :, 1] >= 251)
+                    & (color[:, :, 2] <= 4)
+                )
+                if source.shape[2] == 4:
+                    green_pixels |= source[:, :, 3] == 0
+                mask = np.where(green_pixels, 0, 255).astype(np.uint8)
+
+        return template, mask
 
     def _passes(self, result: DailyMatchResult, spec: DailyTemplateSpec) -> bool:
         threshold = float(self.config.get(spec.threshold_key, spec.default_threshold))
@@ -591,25 +763,67 @@ class DailyTask(BaseBD2Task):
         return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     @staticmethod
-    def _pixel_similarity(region: np.ndarray, template: np.ndarray) -> float:
+    def _resize_mask(mask: np.ndarray | None, scale: float) -> np.ndarray | None:
+        if mask is None:
+            return None
+        if abs(scale - 1.0) < 0.001:
+            return mask
+        return cv2.resize(mask, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+
+    @staticmethod
+    def _pixel_similarity(
+        region: np.ndarray,
+        template: np.ndarray,
+        mask: np.ndarray | None = None,
+    ) -> float:
         if region.shape != template.shape:
             return -1.0
-        diff = np.mean(np.abs(region.astype(np.float32) - template.astype(np.float32)))
+        diff_image = np.abs(region.astype(np.float32) - template.astype(np.float32))
+        if mask is not None:
+            valid = mask > 0
+            if not np.any(valid):
+                return -1.0
+            diff = np.mean(diff_image[valid])
+        else:
+            diff = np.mean(diff_image)
         return float(1.0 - diff / 255.0)
 
 
 GUILD_TEMPLATE = DailyTemplateSpec(
     name="guild",
     file_name="guild.png",
-    threshold_key="公会未完成阈值",
+    threshold_key="公会入口阈值",
     default_threshold=0.78,
+)
+
+GUILD_MAIN_ACTIVE_TEMPLATE = DailyTemplateSpec(
+    name="guild_main_active",
+    file_name="MainBotmUnionAcGE.png",
+    threshold_key="公会入口阈值",
+    default_threshold=0.78,
+    green_mask=True,
 )
 
 GUILD_FINISHED_TEMPLATE = DailyTemplateSpec(
     name="guild_finished",
     file_name="guild-finished.png",
-    threshold_key="公会已完成阈值",
+    threshold_key="公会入口阈值",
     default_threshold=0.78,
+)
+
+GUILD_MAIN_FINISHED_TEMPLATE = DailyTemplateSpec(
+    name="guild_main_finished",
+    file_name="MainBotmUnionGE.png",
+    threshold_key="公会入口阈值",
+    default_threshold=0.78,
+    green_mask=True,
+)
+
+GUILD_ENTRY_TEMPLATES = (
+    GUILD_TEMPLATE,
+    GUILD_MAIN_ACTIVE_TEMPLATE,
+    GUILD_FINISHED_TEMPLATE,
+    GUILD_MAIN_FINISHED_TEMPLATE,
 )
 
 GUILD_SIGNUP_SUCCESS_TEMPLATE = DailyTemplateSpec(
@@ -639,5 +853,23 @@ HOME_TEMPLATE = DailyTemplateSpec(
     threshold_key="主页亮度比例阈值",
     default_threshold=0.75,
 )
+
+HOME_ICE_TEMPLATE = DailyTemplateSpec(
+    name="home_ice",
+    file_name="MainHomeIceGE.png",
+    threshold_key="主页亮度比例阈值",
+    default_threshold=0.75,
+    green_mask=True,
+)
+
+HOME_RICE_TEMPLATE = DailyTemplateSpec(
+    name="home_rice",
+    file_name="MainHomeRIceGE.png",
+    threshold_key="主页亮度比例阈值",
+    default_threshold=0.75,
+    green_mask=True,
+)
+
+HOME_TEMPLATES = (HOME_TEMPLATE, HOME_ICE_TEMPLATE, HOME_RICE_TEMPLATE)
 
 GUILD_SUCCESS_KEYWORDS = ["签到成功", "奖励已发放至邮箱"]

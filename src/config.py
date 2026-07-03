@@ -10,7 +10,7 @@ from src.game_path import calculate_pc_exe_path
 from src.interaction.BD2Interaction import BD2Interaction
 from src.process_feature import process_feature
 
-version = "v0.1.2"
+version = "v0.1.3"
 
 enable_windows_10_wgc()
 
@@ -125,6 +125,7 @@ config = {
     "onetime_tasks": [
         ["src.tasks.DailyTask", "DailyTask"],
         ["src.tasks.FreeGachaTask", "FreeGachaTask"],
+        ["src.tasks.PVPTask", "PVPTask"],
         ["src.tasks.BD2InputTestTask", "BD2ShortKeyInputTestTask"],
         ["src.tasks.BD2InputTestTask", "BD2MouseClickInputTestTask"],
         ["src.tasks.BD2InputTestTask", "BD2LongKeyInputTestTask"],
