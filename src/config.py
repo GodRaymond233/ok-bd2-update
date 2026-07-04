@@ -10,7 +10,7 @@ from src.game_path import calculate_pc_exe_path
 from src.interaction.BD2Interaction import BD2Interaction
 from src.process_feature import process_feature
 
-version = "v0.1.3"
+version = "v0.1.4"
 
 enable_windows_10_wgc()
 
