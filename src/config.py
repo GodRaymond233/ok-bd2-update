@@ -11,7 +11,7 @@ from src.interaction.BD2Interaction import BD2Interaction
 from src.process_feature import process_feature
 from src.ui.responsive_task_config import install_responsive_task_config_ui
 
-version = "v0.1.5"
+version = "v0.1.6"
 
 enable_windows_10_wgc()
 install_responsive_task_config_ui()
@@ -111,6 +111,7 @@ config = {
     ],
     "onetime_tasks": [
         ["src.tasks.DailyTask", "DailyTask"],
+        ["src.tasks.BargainLevelTask", "BargainLevelTask"],
         ["src.tasks.QuickSuppressionTask", "QuickSuppressionTask"],
         ["src.tasks.SquareGoddessTask", "SquareGoddessTask"],
         ["src.tasks.MapTradeTask", "MapTradeTask"],
