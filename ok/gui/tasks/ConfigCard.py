@@ -49,7 +49,7 @@ class ConfigContentMixin:
         # initialize layout
         self.viewLayout.setSpacing(0)
         self.viewLayout.setAlignment(Qt.AlignTop)
-        self.viewLayout.setContentsMargins(10, 0, 10, 0)
+        self.viewLayout.setContentsMargins(6, 4, 6, 8)
         self.sub_configs_rules = self.__collect_sub_configs_rules()
         self.sub_configs_controlled_keys = self.__collect_sub_configs_controlled_keys()
         if not self.config or not (self.config.has_user_config() or self.default_config or self.config_type):
@@ -57,11 +57,11 @@ class ConfigContentMixin:
         else:
             added_keys = set()
             for key, value in self.config.items():
-                if not key.startswith('_') and not self.__is_sub_config_key(key):
+                if not key.startswith('_') and not self.__is_hidden_config(key) and not self.__is_sub_config_key(key):
                     self.__addConfigWithSubConfigs(key, value, added_keys, set())
             if self.config_type:
                 for key, the_type in self.config_type.items():
-                    if key not in added_keys and not key.startswith('_'):
+                    if key not in added_keys and not key.startswith('_') and not self.__is_hidden_config(key):
                         if self.__is_button_config(the_type) and not self.__is_sub_config_key(key):
                             self.__addConfigWithSubConfigs(key, None, added_keys, set())
         self.__setup_sub_configs()
@@ -183,6 +183,10 @@ class ConfigContentMixin:
         if self.config_type is None:
             return None
         return self.config_type.get(key)
+
+    def __is_hidden_config(self, key):
+        the_type = self.__get_config_type(key)
+        return isinstance(the_type, dict) and the_type.get('hidden', False)
 
     def __get_config_value(self, key):
         if self.config is not None and key in self.config:
