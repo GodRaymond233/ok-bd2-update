@@ -11,7 +11,7 @@ from src.interaction.BD2Interaction import BD2Interaction
 from src.process_feature import process_feature
 from src.ui.responsive_task_config import install_responsive_task_config_ui
 
-version = "v0.1.11"
+version = "v0.1.13"
 
 enable_windows_10_wgc()
 install_responsive_task_config_ui()
