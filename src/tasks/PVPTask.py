@@ -71,6 +71,7 @@ class PVPTemplateSpec:
     min_pixel_score: float | None = None
     candidate_center_roi: tuple[float, float, float, float] | None = None
     minimum_safe_threshold: float | None = None
+    min_zncc_score: float | None = None
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,7 @@ class PVPMatchResult:
     pixel_score: float
     position: tuple[int, int]
     size: tuple[int, int]
+    zncc_score: float = -1.0
 
 
 class PVPTask(BaseBD2Task):
@@ -151,7 +153,7 @@ class PVPTask(BaseBD2Task):
                 "PVP 返回箱庭等待秒数": 10.0,
                 "PVP 返回主页等待秒数": 20.0,
                 "主页小屋按钮阈值": 0.70,
-                "快速切换按钮阈值": 0.84,
+                "快速切换按钮阈值": 0.88,
                 "PVP 箱庭阈值": 0.78,
                 "PVP 箱庭感叹号阈值": 0.72,
                 "PVP 舞台阈值": 0.72,
@@ -172,7 +174,7 @@ class PVPTask(BaseBD2Task):
                 "PVP 返回箱庭等待秒数": "离开结算后等待回到 PVP 箱庭的最长时间。",
                 "PVP 返回主页等待秒数": "从 PVP 箱庭返回主页后的主页确认最长时间。",
                 "主页小屋按钮阈值": "进入卡带前确认主页小屋按钮存在的模板匹配阈值。",
-                "快速切换按钮阈值": "识别 BusinQuickIcoGE.png 快速切换按钮的模板匹配阈值。",
+                "快速切换按钮阈值": "识别 QuickSwitchPlayIco.png 快速切换按钮的模板匹配阈值。",
                 "卡带选择页确认等待秒数": (
                     "点击快速切换按钮后，等待 OCR 同时识别最近、剧情游戏卡和玩法游戏卡的时限。"
                 ),
@@ -1111,6 +1113,7 @@ class PVPTask(BaseBD2Task):
                     scaled_mask,
                     template_threshold=template_threshold,
                     pixel_threshold=(spec.min_pixel_score or 0.0),
+                    zncc_threshold=spec.min_zncc_score,
                     center_bounds=center_bounds,
                 )
                 if candidate is None or candidate.score <= best.score:
@@ -1121,6 +1124,7 @@ class PVPTask(BaseBD2Task):
                     pixel_score=candidate.pixel_score,
                     position=(roi_left + x, roi_top + y),
                     size=(int(width), int(height)),
+                    zncc_score=float(getattr(candidate, "zncc_score", -1.0)),
                 )
         except (cv2.error, MemoryError) as exc:
             self._match_pause_until = monotonic() + 2.0
@@ -1205,9 +1209,11 @@ class PVPTask(BaseBD2Task):
             threshold = max(threshold, spec.minimum_safe_threshold)
         if result.score < threshold:
             return False
-        if spec.min_pixel_score is None:
-            return True
-        return result.pixel_score >= spec.min_pixel_score
+        if spec.min_pixel_score is not None and result.pixel_score < spec.min_pixel_score:
+            return False
+        if spec.min_zncc_score is not None and result.zncc_score < spec.min_zncc_score:
+            return False
+        return True
 
     def _ocr_text(
         self,
@@ -1596,15 +1602,16 @@ HOME_TEMPLATES = (HOME_TEMPLATE, HOME_ICE_TEMPLATE, HOME_RICE_TEMPLATE)
 
 QUICK_PACK_TEMPLATE = PVPTemplateSpec(
     name="quick_pack",
-    file_name="image/green/BusinQuickIcoGE.png",
+    file_name="image/green/QuickSwitchPlayIco.png",
     threshold_key="快速切换按钮阈值",
-    default_threshold=0.84,
+    default_threshold=0.88,
     relative_roi=(0.25, 0.85, 0.65, 1.0),
     green_mask=True,
     scale_ratios=(0.95, 0.975, 1.0, 1.025, 1.05),
-    min_pixel_score=0.72,
+    min_pixel_score=0.85,
     candidate_center_roi=(650 / 1920, 950 / 1080, 1050 / 1920, 1045 / 1080),
-    minimum_safe_threshold=0.84,
+    minimum_safe_threshold=0.88,
+    min_zncc_score=0.85,
 )
 
 PVP_MEDALS_TEMPLATE = PVPTemplateSpec(
