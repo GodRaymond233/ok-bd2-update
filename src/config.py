@@ -11,7 +11,7 @@ from src.interaction.BD2Interaction import BD2Interaction
 from src.process_feature import process_feature
 from src.ui.responsive_task_config import install_responsive_task_config_ui
 
-version = "v0.1.16"
+version = "v0.1.17"
 
 enable_windows_10_wgc()
 install_responsive_task_config_ui()
@@ -135,4 +135,12 @@ config = {
         ["src.ui.AutoLoginStatusTab", "AutoLoginStatusTab"],
     ],
     "scene": ["src.scene.BD2Scene", "BD2Scene"],
+    "update_pyappify": {
+        "to_version": "1.1.9",
+        "zip_url": (
+            "https://github.com/GodRaymond233/ok-bd2/releases/download/"
+            "v0.1.14/ok-bd2-win32.zip"
+        ),
+        "sha256": "9f9537587e2cf2925bd182a245710da554a0571a3504c77ac4043fbd2247a6d0",
+    },
 }
