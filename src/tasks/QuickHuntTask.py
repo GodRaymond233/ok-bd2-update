@@ -1,6 +1,12 @@
 from qfluentwidgets import FluentIcon
 
-from src.tasks.DailyTask import QUICK_HUNT_CHILD_CONFIG_KEYS, DailyTask
+from src.tasks.BaseBD2Task import BaseBD2Task
+from src.tasks.quick_hunt import (
+    QUICK_HUNT_CHILD_CONFIG_KEYS,
+    QuickHuntConfigMixin,
+    QuickHuntFeatureMixin,
+)
+from src.tasks.task_vision_mixin import TaskVisionMixin
 
 DAILY_ONLY_CONFIG_KEYS = (
     "执行公会签到",
@@ -18,7 +24,12 @@ DAILY_ONLY_CONFIG_KEYS = (
 )
 
 
-class QuickHuntTask(DailyTask):
+class QuickHuntTask(
+    QuickHuntFeatureMixin,
+    QuickHuntConfigMixin,
+    TaskVisionMixin,
+    BaseBD2Task,
+):
     """Standalone quick-hunt task backed by the migrated  flow."""
 
     include_quick_hunt_config = True
@@ -65,6 +76,11 @@ class QuickHuntTask(DailyTask):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self._init_vision_state()
+        self._install_quick_hunt_config()
+        self.visible = True
+        self.group_name = "日常/周常"
+        self.group_icon = FluentIcon.CALENDAR
         self.name = "快速狩猎"
         self.description = "从首页进入快速狩猎，调度米饭并补充数量最少的属性圣石。"
         self.icon = FluentIcon.GAME
@@ -90,6 +106,24 @@ class QuickHuntTask(DailyTask):
             "max": 0.95,
             "step": 0.01,
         }
+        self.default_config.update(
+            {
+                "主页亮度比例阈值": 0.75,
+                "主页确认等待秒数": 10.0,
+            }
+        )
+        self.config_description.update(
+            {
+                "主页亮度比例阈值": "确认已返回主页所需的最低亮色像素比例。",
+                "主页确认等待秒数": "点击主页按钮后确认已返回主页的最长等待时间。",
+            }
+        )
+        self.config_type.update(
+            {
+                "主页亮度比例阈值": {"min": 0.5, "max": 0.95, "step": 0.01},
+                "主页确认等待秒数": {"min": 2.0, "max": 30.0, "step": 1.0},
+            }
+        )
 
         visible_keys = list(QUICK_HUNT_CHILD_CONFIG_KEYS)
         ocr_index = visible_keys.index("快速狩猎像素相似度阈值") + 1

@@ -12,33 +12,19 @@ from PIL import Image
 
 from src.scene.BD2Scene import BD2Scene
 from src.scene.ScreenPosition import ScreenPosition
+from src.utils.home_confirmation import (
+    HOME_ANNOUNCEMENT_CLEAR_RELATIVE_POINT,
+    home_temporary_announcement_detected,
+)
+from src.utils.image_utils import (
+    green_mask_from_template,
+)
 from src.utils.ocr_utils import normalize_ocr_text
 
 logger = Logger.get_logger(__name__)
 PROBE_OUTPUT_DIR = Path("probe_outputs")
 GREEN_MASK_TOLERANCE = 0
 CARTRIDGE_RECENT_ENTRY_POINT = (0.7875, 0.9111111111111111)
-RECENT_CARTRIDGE_SPECIAL_PAGE_SECONDS = 3.0
-RECENT_CARTRIDGE_SPECIAL_PAGE_MAX_ACTIONS = 3
-
-
-def green_mask_from_template(
-    template: np.ndarray,
-    tolerance: int = GREEN_MASK_TOLERANCE,
-) -> np.ndarray:
-    if template.ndim < 3:
-        return np.full(template.shape[:2], 255, dtype=np.uint8)
-
-    color = template[:, :, :3]
-    tolerance = max(0, int(tolerance))
-    green_pixels = (
-        (color[:, :, 0] <= tolerance)
-        & (color[:, :, 1] >= 255 - tolerance)
-        & (color[:, :, 2] <= tolerance)
-    )
-    if template.shape[2] >= 4:
-        green_pixels |= template[:, :, 3] == 0
-    return np.where(green_pixels, 0, 255).astype(np.uint8)
 
 
 class BaseBD2Task(BaseTask):
@@ -51,6 +37,7 @@ class BaseBD2Task(BaseTask):
         self.default_box = ScreenPosition(self)
         self._last_interval_action_time = {}
         self._action_interval_lock = threading.Lock()
+        self._last_home_announcement_clear_at = 0.0
         self.default_config.update(
             {
                 "识别成功后等待秒数": 1.0,
@@ -98,7 +85,15 @@ class BaseBD2Task(BaseTask):
     def save_frame(self, name: str, frame) -> Path:
         PROBE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = PROBE_OUTPUT_DIR / f"{name}.png"
-        Image.fromarray(frame).save(output_path)
+        if frame.ndim == 2:
+            image = Image.fromarray(frame)
+        elif frame.ndim == 3 and frame.shape[2] == 4:
+            image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGRA2RGBA))
+        elif frame.ndim == 3 and frame.shape[2] == 3:
+            image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        else:
+            raise ValueError(f"Unsupported screenshot frame shape: {frame.shape}")
+        image.save(output_path)
         self.info_set("截图文件", str(output_path))
         return output_path
 
@@ -264,10 +259,132 @@ class BaseBD2Task(BaseTask):
             return f"{action_name}: boxes={len(x)}"
         return f"{action_name}: target={x!r},{y!r}"
 
+    def drag_client(
+        self,
+        start: tuple[int, int],
+        end: tuple[int, int],
+        duration: float = 0.7,
+        after_sleep: float = 0.0,
+    ) -> None:
+        """Drag with foreground mouse input only; these tasks never send keys."""
+
+        def action():
+            import win32api
+            import win32con
+
+            interaction = getattr(self.executor, "interaction", None)
+            if interaction is not None and hasattr(interaction, "force_activate"):
+                interaction.force_activate()
+            elif interaction is not None and hasattr(interaction, "try_activate"):
+                interaction.try_activate()
+            capture = getattr(interaction, "capture", None)
+
+            def to_screen(point: tuple[int, int]) -> tuple[int, int]:
+                if capture is not None and hasattr(capture, "get_abs_cords"):
+                    return capture.get_abs_cords(point[0], point[1])
+                return point
+
+            start_abs = to_screen(start)
+            end_abs = to_screen(end)
+            steps = max(6, round(duration / 0.03))
+            win32api.SetCursorPos(start_abs)
+            time.sleep(0.03)
+            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+            try:
+                for index in range(1, steps + 1):
+                    ratio = index / steps
+                    x = round(start_abs[0] + (end_abs[0] - start_abs[0]) * ratio)
+                    y = round(start_abs[1] + (end_abs[1] - start_abs[1]) * ratio)
+                    win32api.SetCursorPos((x, y))
+                    time.sleep(duration / steps)
+            finally:
+                win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+
+        self.operate(action, block=True, restore_cursor=True)
+        self.sleep(after_sleep)
+
+    def scroll_client(
+        self,
+        relative_point: tuple[float, float],
+        scroll_amount: int,
+        count: int = 1,
+        interval: float = 0.1,
+        after_sleep: float = 0.0,
+    ) -> None:
+        """Send foreground mouse-wheel events at a relative client point."""
+
+        frame = self.capture_frame()
+        height, width = frame.shape[:2]
+        x = round(max(0.0, min(1.0, relative_point[0])) * width)
+        y = round(max(0.0, min(1.0, relative_point[1])) * height)
+        wheel_count = max(1, int(count))
+        wheel_interval = max(0.0, float(interval))
+        interaction = getattr(self.executor, "interaction", None)
+        if interaction is None or not hasattr(interaction, "scroll"):
+            raise RuntimeError("当前交互对象不支持鼠标滚轮")
+
+        def action():
+            import win32api
+
+            if hasattr(interaction, "force_activate"):
+                interaction.force_activate()
+            elif hasattr(interaction, "try_activate"):
+                interaction.try_activate()
+            capture = getattr(interaction, "capture", None)
+            if capture is not None and hasattr(capture, "get_abs_cords"):
+                win32api.SetCursorPos(capture.get_abs_cords(x, y))
+            for index in range(wheel_count):
+                interaction.scroll(x, y, int(scroll_amount))
+                if index + 1 < wheel_count:
+                    time.sleep(wheel_interval)
+
+        self.operate(action, block=True, restore_cursor=True)
+        self.sleep(after_sleep)
+
     def _sleep_after_recognition(self) -> None:
         seconds = float(self.config.get("识别成功后等待秒数", 1.0))
         if seconds > 0:
             self.sleep(seconds)
+
+    def clear_temporary_home_announcement_if_needed(
+        self,
+        *,
+        button_found: bool,
+        brightness_ratio: float,
+        brightness_threshold: float,
+        gacha_ocr_text: object,
+        context: str,
+    ) -> bool:
+        """Clear a dimming announcement only when the other two home signals pass."""
+        if not home_temporary_announcement_detected(
+            button_found=button_found,
+            brightness_ratio=brightness_ratio,
+            brightness_threshold=brightness_threshold,
+            gacha_ocr_text=gacha_ocr_text,
+        ):
+            return False
+
+        now = monotonic()
+        last_click_at = float(
+            getattr(self, "_last_home_announcement_clear_at", 0.0)
+        )
+        if now - last_click_at < 1.0:
+            return True
+        self._last_home_announcement_clear_at = now
+
+        clear_x, clear_y = HOME_ANNOUNCEMENT_CLEAR_RELATIVE_POINT
+        self.info_set(
+            "主页临时公告",
+            f"{context}：亮度 {brightness_ratio:.3f}/{brightness_threshold:.3f}",
+        )
+        self.log_info(
+            f"{context}：主页按钮和抽抽乐 OCR 已命中但亮度不足，"
+            f"按登录公告流程点击清理位置，ratio={brightness_ratio:.3f}, "
+            f"x={clear_x:.2%}, y={clear_y:.2%}。"
+        )
+        self._sleep_after_recognition()
+        self.operate_click(clear_x, clear_y, after_sleep=0.2)
+        return True
 
     def open_cartridge_quick_switcher(
         self,
@@ -279,16 +396,27 @@ class BaseBD2Task(BaseTask):
         if not ensure_home():
             return False
 
+        try:
+            recent_cartridge_is_pvp = self._recent_cartridge_is_pvp()
+        except RuntimeError as exc:
+            self.info_set("最近卡带 PVP 模板错误", str(exc))
+            self.log_warning(str(exc), notify=True)
+            return False
+
         # Fixed common flow: confirmed home -> recognition settle delay
-        # -> recent cartridge -> OCR special pages for 3 seconds, timed from the click
+        # -> classify the recent cartridge from the confirmed home page
+        # -> recent cartridge -> OCR PVP special pages only for a recent PVP cartridge
         # -> recognize the quick-switch icon -> click the recognized center
         # -> confirm the cartridge selection page.
         self._sleep_after_recognition()
         self.info_set("当前阶段", "点击最近卡带")
         self.operate_click(*CARTRIDGE_RECENT_ENTRY_POINT, after_sleep=0.0)
-        self._handle_recent_cartridge_special_pages()
+        if recent_cartridge_is_pvp:
+            self._handle_recent_cartridge_special_pages()
         self.info_set("当前阶段", "寻找快速切换按钮")
         if not click_quick_switch():
+            if not recent_cartridge_is_pvp:
+                return False
             handled_after_timeout = self._handle_recent_cartridge_special_pages()
             if not handled_after_timeout:
                 return False
@@ -297,89 +425,14 @@ class BaseBD2Task(BaseTask):
                 return False
         return bool(confirm_quick_switch_page())
 
-    def _handle_recent_cartridge_special_pages(
-        self,
-        timeout: float = RECENT_CARTRIDGE_SPECIAL_PAGE_SECONDS,
-        interval: float = 0.25,
-    ) -> bool:
-        """OCR and dismiss PVP promotion, demotion, and season reward pages."""
-        end_at = monotonic() + max(0.0, float(timeout))
-        handled: set[str] = set()
-        action_count = 0
+    def _recent_cartridge_is_pvp(self) -> bool:
+        """Whether the recent cartridge requires PVP special-page handling.
 
-        while True:
-            boxes = self._recent_cartridge_ocr_boxes()
-            text = " ".join(
-                str(getattr(box, "name", ""))
-                for box in boxes
-                if getattr(box, "name", "")
-            )
-            self.info_set("最近卡带特殊页面 OCR", text or "-")
-            normalized = normalize_ocr_text(text)
-
-            action_name = ""
-            target_box = None
-            if "赛季奖励" in normalized and "点击画面即可返回" in normalized:
-                action_name = "赛季奖励"
-                target_box = self._find_ocr_box(boxes, "点击画面即可返回")
-            elif "恭喜晋级" in normalized and "确认" in normalized:
-                action_name = "恭喜晋级"
-                target_box = self._find_ocr_box(boxes, "确认")
-            elif "段位下滑" in normalized and "确认" in normalized:
-                action_name = "段位下滑"
-                target_box = self._find_ocr_box(boxes, "确认")
-
-            if action_name and action_name not in handled and target_box is not None:
-                point = self._ocr_box_center(target_box)
-                if point is not None:
-                    frame_width = max(1, int(self.width))
-                    frame_height = max(1, int(self.height))
-                    self.info_set("当前阶段", f"处理最近卡带{action_name}")
-                    self.operate_click(
-                        max(0.0, min(1.0, point[0] / frame_width)),
-                        max(0.0, min(1.0, point[1] / frame_height)),
-                        after_sleep=0.5,
-                    )
-                    handled.add(action_name)
-                    action_count += 1
-
-            if (
-                monotonic() >= end_at
-                or action_count >= RECENT_CARTRIDGE_SPECIAL_PAGE_MAX_ACTIONS
-            ):
-                break
-            self.sleep(max(0.0, float(interval)))
-
-        return bool(handled)
-
-    def _recent_cartridge_ocr_boxes(self) -> list:
-        try:
-            frame = self.capture_frame()
-            config = getattr(self, "config", {})
-            threshold = next(
-                (
-                    float(config[key])
-                    for key in (
-                        "PVP OCR 阈值",
-                        "广场 OCR 阈值",
-                        "跑商 OCR 阈值",
-                        "跑图 OCR 阈值",
-                    )
-                    if key in config
-                ),
-                0.2,
-            )
-            boxes = self.ocr(
-                frame=frame,
-                threshold=threshold,
-                target_height=720,
-                log=False,
-                name="最近卡带特殊页面",
-            )
-        except Exception as exc:
-            self.info_set("最近卡带特殊页面 OCR 错误", str(exc))
-            return []
-        return list(boxes)
+        The shared quick-switcher flow only runs PVP special-page OCR when
+        this hook reports True.  The default is False; PVPTask overrides it
+        with the PVP cartridge template matcher.
+        """
+        return False
 
     @staticmethod
     def _find_ocr_box(boxes: list, keyword: str):

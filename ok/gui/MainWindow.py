@@ -34,7 +34,7 @@ from ok.gui.util.Alert import alert_error
 from ok.gui.util.touch_scroll import enable_touch_scrolling
 from ok.gui.util.pyappify_startup import get_startup_version_change
 from ok.gui.widget.StartLoadingDialog import StartLoadingDialog
-from ok.util.GlobalConfig import basic_options, KILL_LAUNCHER_AFTER_START
+from ok.util.GlobalConfig import basic_options, KILL_LAUNCHER_AFTER_START, NOTIFICATION_OPTION_NAME
 from ok.util.clazz import init_class_by_name
 from ok.util.process import restart_as_admin, parse_arguments_to_map
 
@@ -51,6 +51,9 @@ class MainWindow(FluentWindow):
     def __init__(self, app, config, ok_config, icon, title, version, debug=False, about=None, exit_event=None,
                  global_config=None, executor=None, handler=None):
         super().__init__()
+        # Page pop transitions move scroll-area contents vertically and can show
+        # a brief top/bottom flash when switching navigation tabs.
+        self.stackedWidget.setAnimationEnabled(False)
         self._theme_cooldowns = set()
         logger.info('main window __init__')
         self._sync_system_accent_color(refresh=True)
@@ -77,6 +80,9 @@ class MainWindow(FluentWindow):
         self.do_not_quit = False
         self.config = config
         self.shown = False
+        from ok.notification import NotificationManager
+        self.notification_manager = NotificationManager(
+            global_config, executor, exit_event, app_name=title, app_icon=config.get('gui_icon'))
 
         communicate.restart_admin.connect(self.restart_admin)
         if config.get('show_update_copyright'):
@@ -85,7 +91,6 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.start_tab, FluentIcon.PLAY, self.tr('Capture'),
                              position=NavigationItemPosition.SCROLL)
 
-        self.first_task_tab = None
         self.grouped_task_tabs = []
         self.schedule_tab = None
         self.global_config_tabs = []
@@ -115,8 +120,6 @@ class MainWindow(FluentWindow):
         if len(visible_trigger_tasks) > 0:
             from ok.gui.tasks.TriggerTaskTab import TriggerTaskTab
             self.trigger_tab = TriggerTaskTab()
-            if self.first_task_tab is None:
-                self.first_task_tab = self.trigger_tab
             self.addSubInterface(self.trigger_tab, FluentIcon.STOP_WATCH, self.tr('Triggers'),
                                  position=NavigationItemPosition.SCROLL)
 
@@ -135,8 +138,6 @@ class MainWindow(FluentWindow):
 
             if standalone_tasks:
                 self.onetime_tab = OneTimeTaskTab(is_standalone=True)
-                if self.first_task_tab is None:
-                    self.first_task_tab = self.onetime_tab
                 logger.debug(f"add default onetime_tab len {len(standalone_tasks)}")
                 self.addSubInterface(self.onetime_tab, FluentIcon.BOOK_SHELF, self.tr('Tasks'),
                                      position=NavigationItemPosition.SCROLL)
@@ -144,8 +145,6 @@ class MainWindow(FluentWindow):
             for group_name, tasks_in_group in groups.items():
                 group_tab = OneTimeTaskTab(is_standalone=False, group_name=group_name)
                 group_icon = tasks_in_group[0].group_icon
-                if self.first_task_tab is None:
-                    self.first_task_tab = group_tab
                 logger.debug(f"add grouped_task_tabs {group_name} len {len(tasks_in_group)}")
                 self.addSubInterface(group_tab, group_icon, self.app.tr(group_name),
                                      position=NavigationItemPosition.SCROLL)
@@ -188,22 +187,31 @@ class MainWindow(FluentWindow):
             self.addSubInterface(self.schedule_tab, FluentIcon.CALENDAR, self.tr('Schedule'),
                                  position=NavigationItemPosition.SCROLL)
 
+        notification_tab = None
         for name, config_obj, option in global_config.get_all_visible_configs():
             if getattr(option, 'show_at_tab', False):
                 from ok.gui.settings.GlobalConfigTab import GlobalConfigTab
                 config_tab = GlobalConfigTab(config_obj, option)
                 self.global_config_tabs.append(config_tab)
-                self.addSubInterface(config_tab, option.icon or FluentIcon.INFO, self.app.tr(option.name),
-                                     position=NavigationItemPosition.SCROLL)
+                if name == NOTIFICATION_OPTION_NAME:
+                    notification_tab = config_tab
+                else:
+                    self.addSubInterface(config_tab, option.icon or FluentIcon.INFO, self.app.tr(option.name),
+                                         position=NavigationItemPosition.SCROLL)
 
-        from ok.gui.about.AboutTab import AboutTab
-        self.about_tab = AboutTab(config)
-        self.addSubInterface(self.about_tab, FluentIcon.QUESTION, self.tr('About'),
-                             position=NavigationItemPosition.BOTTOM)
+        if notification_tab is not None:
+            self.notification_tab = notification_tab
+            self.addSubInterface(notification_tab, FluentIcon.RINGER, self.app.tr(NOTIFICATION_OPTION_NAME),
+                                 position=NavigationItemPosition.BOTTOM)
 
         from ok.gui.settings.SettingTab import SettingTab
         self.setting_tab = SettingTab()
         self.addSubInterface(self.setting_tab, FluentIcon.SETTING, self.tr('Settings'),
+                             position=NavigationItemPosition.BOTTOM)
+
+        from ok.gui.about.AboutTab import AboutTab
+        self.about_tab = AboutTab(config)
+        self.addSubInterface(self.about_tab, FluentIcon.QUESTION, self.tr('About'),
                              position=NavigationItemPosition.BOTTOM)
 
         dev = self.tr('Debug')
@@ -610,17 +618,21 @@ class MainWindow(FluentWindow):
         )
         self.tray.showMessage(title, message)
 
-    def show_notification(self, message, title=None, error=False, tray=False, show_tab=None, params=None):
+    def show_notification(self, message, title=None, error=False, tray=False, show_tab=None, params=None, images=None):
+        from ok import og
         from ok.gui.util.app import show_info_bar
         translated_message = QCoreApplication.translate("app", message)
         if params:
             translated_message = translated_message.format(**params)
-        translated_title = QCoreApplication.translate("app", title) if title else ""
+        translated_title = og.app.tr(title) if title else ""
         show_info_bar(self.window(), translated_message, translated_title, error)
-        if tray:
+        notification_manager = getattr(self, 'notification_manager', None)
+        if tray and (notification_manager is None or notification_manager.system_enabled):
             self.tray.showMessage(translated_title, translated_message,
                                   QSystemTrayIcon.Critical if error else QSystemTrayIcon.Information,
                                   5000)
+        if notification_manager is not None:
+            notification_manager.submit(translated_title, translated_message, images)
         self.navigate_tab(show_tab)
 
     def capture_error(self):
@@ -640,10 +652,21 @@ class MainWindow(FluentWindow):
         elif index == "about" and self.about_tab is not None:
             self.switchTo(self.about_tab)
 
+    def startup_task_tab(self):
+        """Return the first one-time task tab, falling back to triggers."""
+        if self.onetime_tab is not None:
+            return self.onetime_tab
+        if self.grouped_task_tabs:
+            return self.grouped_task_tabs[0]
+        if self.imported_tabs:
+            return next(iter(self.imported_tabs.values()))
+        return self.trigger_tab
+
     def executor_paused(self, paused):
-        if not paused and self.stackedWidget.currentIndex() == 0 and self.first_task_tab:
-            self.switchTo(self.first_task_tab)
-        self.show_notification(self.tr("Start Success.") if not paused else self.tr("Pause Success."), tray=not paused)
+        task_tab = self.startup_task_tab()
+        if not paused and self.stackedWidget.currentIndex() == 0 and task_tab:
+            self.switchTo(task_tab)
+        self.show_notification(self.tr("Start Success.") if not paused else self.tr("Pause Success."), tray=False)
 
     def _check_okscript_args(self):
         """Check sys.argv for .okscript files and import them."""

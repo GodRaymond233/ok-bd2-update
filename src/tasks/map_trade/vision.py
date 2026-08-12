@@ -10,34 +10,32 @@ import cv2
 import numpy as np
 from opencc import OpenCC
 
-from src.tasks.BaseBD2Task import green_mask_from_template
 from src.tasks.map_trade.models import (
-    MF_REFERENCE_HEIGHT,
-    MF_REFERENCE_WIDTH,
+    MAP_TRADE_REFERENCE,
     MatchResult,
     TemplateSpec,
 )
+from src.utils import task_vision
 from src.utils.image_utils import (
-    best_pixel_valid_match,
     candidate_scales,
     independent_pixel_valid_matches,
     pixel_similarity,
     relative_roi_frame,
     resize_mask,
     resize_template,
+    scale_reference_roi,
     stabilize_template_match,
     template_match_response,
     to_gray,
 )
 from src.utils.template_resolution import (
-    offline_template_requires_green_mask,
     offline_template_scale,
     offline_template_search_region,
     offline_template_uses_main_region,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-TEMPLATE_DIR = PROJECT_ROOT / "offline-train" / "train-source-screenshots"
+TEMPLATE_DIR = PROJECT_ROOT / "recognition-assets" / "template-assets"
 EMPTY_MATCH = MatchResult(-1.0, (0, 0), (0, 0))
 COUNT_PATTERN = re.compile(r"(?<!\d)(\d+)\s*[/：:|\-~]\s*(\d+)(?!\d)")
 
@@ -65,18 +63,20 @@ class Vision:
     @staticmethod
     def reference_point(x: float, y: float, width: int, height: int) -> tuple[int, int]:
         return (
-            round(width * x / MF_REFERENCE_WIDTH),
-            round(height * y / MF_REFERENCE_HEIGHT),
+            round(width * x / MAP_TRADE_REFERENCE.width),
+            round(height * y / MAP_TRADE_REFERENCE.height),
         )
 
     @staticmethod
     def reference_roi(
         roi: tuple[int, int, int, int], width: int, height: int
     ) -> tuple[int, int, int, int]:
-        x, y, roi_width, roi_height = roi
-        left, top = Vision.reference_point(x, y, width, height)
-        right, bottom = Vision.reference_point(x + roi_width, y + roi_height, width, height)
-        return left, top, max(1, right - left), max(1, bottom - top)
+        left, top, roi_width, roi_height = scale_reference_roi(
+            roi,
+            (width, height),
+            MAP_TRADE_REFERENCE.size,
+        )
+        return left, top, max(1, roi_width), max(1, roi_height)
 
     def capture(self):
         return self.task.capture_frame()
@@ -99,8 +99,8 @@ class Vision:
 
     def click_reference(self, x: float, y: float, after_sleep: float = 0.0) -> None:
         self.task.operate_click(
-            max(0.0, min(1.0, x / MF_REFERENCE_WIDTH)),
-            max(0.0, min(1.0, y / MF_REFERENCE_HEIGHT)),
+            max(0.0, min(1.0, x / MAP_TRADE_REFERENCE.width)),
+            max(0.0, min(1.0, y / MAP_TRADE_REFERENCE.height)),
             after_sleep=after_sleep,
         )
 
@@ -123,7 +123,7 @@ class Vision:
     ) -> None:
         frame = self.capture()
         height, width = frame.shape[:2]
-        self.task._drag_client(
+        self.task.drag_client(
             self.reference_point(*start, width, height),
             self.reference_point(*end, width, height),
             duration=duration,
@@ -131,24 +131,7 @@ class Vision:
         )
 
     def _load(self, spec: TemplateSpec) -> tuple[np.ndarray, np.ndarray | None]:
-        if spec.file_name in self._templates:
-            return self._templates[spec.file_name]
-        path = TEMPLATE_DIR / spec.file_name
-        raw = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
-        if raw is None:
-            raise RuntimeError(f"跑图跑商模板不存在或无法读取：{path}")
-        use_green_mask = spec.green_mask or offline_template_requires_green_mask(spec.file_name)
-        mask = green_mask_from_template(raw) if use_green_mask else None
-        if raw.ndim == 2:
-            gray = raw
-        elif raw.shape[2] == 4:
-            gray = cv2.cvtColor(raw, cv2.COLOR_BGRA2GRAY)
-        else:
-            gray = cv2.cvtColor(raw, cv2.COLOR_BGR2GRAY)
-        if mask is not None and np.count_nonzero(mask) == mask.size:
-            mask = None
-        self._templates[spec.file_name] = (gray, mask)
-        return gray, mask
+        return task_vision.load_template(TEMPLATE_DIR, spec, cache=self._templates)
 
     _gray = staticmethod(to_gray)
 
@@ -187,73 +170,18 @@ class Vision:
     _resize_mask = staticmethod(resize_mask)
 
     def match(self, frame: np.ndarray, spec: TemplateSpec) -> MatchResult:
-        template, mask = self._load(spec)
-        gray = self._gray(frame)
-        frame_height, frame_width = gray.shape[:2]
-        left = top = 0
-        search = gray
-        if offline_template_uses_main_region(spec.file_name):
-            left, top, right, bottom = offline_template_search_region(
-                spec.file_name,
-                frame_width,
-                frame_height,
-            )
-            search = gray[top:bottom, left:right]
-        elif spec.relative_roi is not None:
-            left, top, search = self._relative_roi(gray, spec.relative_roi)
-        elif spec.roi is not None:
-            left, top, width, height = self.reference_roi(spec.roi, frame_width, frame_height)
-            search = gray[top : top + height, left : left + width]
-        if search.size == 0:
-            return EMPTY_MATCH
-
-        best = EMPTY_MATCH
-        template_threshold = self.threshold_for(spec)
-        center_bounds = None
-        if spec.candidate_center_roi is not None:
-            center_left, center_top, center_right, center_bottom = spec.candidate_center_roi
-            center_bounds = (
-                round(frame_width * center_left) - left,
-                round(frame_height * center_top) - top,
-                round(frame_width * center_right) - left,
-                round(frame_height * center_bottom) - top,
-            )
-        base_scale = offline_template_scale(
-            spec.file_name,
-            frame_width,
-            frame_height,
-            reference_scale=spec.reference_scale,
+        return task_vision.match_template(
+            frame,
+            spec,
+            self.task.config,
+            TEMPLATE_DIR,
+            cache=self._templates,
+            min_size=4,
+            skip_scale_errors=True,
+            template_threshold=self.threshold_for(spec),
+            roi_reference_size=MAP_TRADE_REFERENCE.size,
+            loader=lambda _template_dir, spec: self._load(spec),
         )
-        for scale in self._candidate_scales(base_scale, spec.scale_ratios):
-            scaled = self._resize_template(template, scale)
-            scaled_mask = self._resize_mask(mask, scale)
-            height, width = scaled.shape[:2]
-            if height < 4 or width < 4 or height > search.shape[0] or width > search.shape[1]:
-                continue
-            try:
-                result = template_match_response(search, scaled, scaled_mask)
-            except cv2.error:
-                continue
-            candidate = best_pixel_valid_match(
-                result,
-                search,
-                scaled,
-                scaled_mask,
-                template_threshold=template_threshold,
-                pixel_threshold=(spec.min_pixel_score or 0.0),
-                zncc_threshold=spec.min_zncc_score,
-                center_bounds=center_bounds,
-            )
-            if candidate is None or candidate.score <= best.score:
-                continue
-            best = MatchResult(
-                score=candidate.score,
-                position=(left + candidate.location[0], top + candidate.location[1]),
-                size=(width, height),
-                pixel_score=candidate.pixel_score,
-                zncc_score=float(getattr(candidate, "zncc_score", -1.0)),
-            )
-        return best
 
     def match_all(
         self,
@@ -292,6 +220,17 @@ class Vision:
         radius = max(1, int(peak_radius))
         limit = max(1, int(max_results))
         score_floor = max(-1.0, min(1.0, float(minimum_score)))
+        center_bounds = None
+        if spec.candidate_center_roi is not None:
+            center_left, center_top, center_right, center_bottom = (
+                spec.candidate_center_roi
+            )
+            center_bounds = (
+                round(frame_width * center_left) - left,
+                round(frame_height * center_top) - top,
+                round(frame_width * center_right) - left,
+                round(frame_height * center_bottom) - top,
+            )
         candidates: list[MatchResult] = []
         base_scale = offline_template_scale(
             spec.file_name,
@@ -317,6 +256,7 @@ class Vision:
                 template_threshold=score_floor,
                 pixel_threshold=(spec.min_pixel_score or 0.0),
                 zncc_threshold=spec.min_zncc_score,
+                center_bounds=center_bounds,
                 suppression_radius=radius,
                 max_matches=limit,
             )
@@ -347,13 +287,129 @@ class Vision:
         return tuple(independent)
 
     def passes(self, result: MatchResult, spec: TemplateSpec) -> bool:
-        if result.score < self.threshold_for(spec):
-            return False
-        if spec.min_pixel_score is not None and result.pixel_score < spec.min_pixel_score:
-            return False
-        if spec.min_zncc_score is not None and result.zncc_score < spec.min_zncc_score:
-            return False
-        return True
+        return task_vision.passes_match(
+            result,
+            spec,
+            self.task.config,
+            threshold=self.threshold_for(spec),
+        )
+
+    def template_color_ratios(
+        self,
+        frame: np.ndarray,
+        spec: TemplateSpec,
+        result: MatchResult,
+    ) -> tuple[float, float, float] | None:
+        """Measure green, red, and neutral pixels under a template mask."""
+
+        left, top = result.position
+        width, height = result.size
+        right = left + width
+        bottom = top + height
+        if (
+            width <= 0
+            or height <= 0
+            or left < 0
+            or top < 0
+            or right > frame.shape[1]
+            or bottom > frame.shape[0]
+        ):
+            return None
+        crop = frame[top:bottom, left:right]
+        if crop.ndim == 2:
+            color = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
+        elif crop.shape[2] == 4:
+            color = cv2.cvtColor(crop, cv2.COLOR_BGRA2BGR)
+        else:
+            color = crop[:, :, :3]
+
+        _template, mask = self._load(spec)
+        if mask is None:
+            active = np.ones((height, width), dtype=bool)
+        else:
+            active = cv2.resize(
+                mask,
+                (width, height),
+                interpolation=cv2.INTER_NEAREST,
+            ) > 0
+        if not np.any(active):
+            return None
+
+        pixels = color[active].astype(np.int16)
+        blue, green, red = pixels.T
+        green_pixels = (
+            (green - np.maximum(blue, red) >= 8)
+            & (green >= 60)
+        )
+        red_pixels = (
+            (red - np.maximum(blue, green) >= 8)
+            & (red >= 60)
+        )
+        neutral_pixels = (
+            np.max(pixels, axis=1) - np.min(pixels, axis=1) <= 10
+        )
+        return (
+            float(np.mean(green_pixels)),
+            float(np.mean(red_pixels)),
+            float(np.mean(neutral_pixels)),
+        )
+
+    def template_hsv_color_ratios(
+        self,
+        frame: np.ndarray,
+        spec: TemplateSpec,
+        result: MatchResult,
+    ) -> tuple[float, float, float] | None:
+        """Measure yellow, neutral, and bright pixels under a match mask."""
+
+        left, top = result.position
+        width, height = result.size
+        right = left + width
+        bottom = top + height
+        if (
+            width <= 0
+            or height <= 0
+            or left < 0
+            or top < 0
+            or right > frame.shape[1]
+            or bottom > frame.shape[0]
+        ):
+            return None
+        crop = frame[top:bottom, left:right]
+        if crop.ndim == 2:
+            color = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
+        elif crop.shape[2] == 4:
+            color = cv2.cvtColor(crop, cv2.COLOR_BGRA2BGR)
+        else:
+            color = crop[:, :, :3]
+
+        _template, mask = self._load(spec)
+        if mask is None:
+            active = np.ones((height, width), dtype=bool)
+        else:
+            active = cv2.resize(
+                mask,
+                (width, height),
+                interpolation=cv2.INTER_NEAREST,
+            ) > 0
+        if not np.any(active):
+            return None
+
+        hsv = cv2.cvtColor(color, cv2.COLOR_BGR2HSV)
+        hue, saturation, value = hsv[active].T
+        yellow = (
+            (hue >= 8)
+            & (hue <= 38)
+            & (saturation >= 60)
+            & (value >= 75)
+        )
+        neutral = (saturation <= 55) & (value >= 50)
+        bright = value >= 130
+        return (
+            float(np.mean(yellow)),
+            float(np.mean(neutral)),
+            float(np.mean(bright)),
+        )
 
     def template_brightness_ratio(
         self,
@@ -547,6 +603,9 @@ class Vision:
         name: str,
         roi: tuple[int, int, int, int] | None = None,
         relative_roi: tuple[float, float, float, float] | None = None,
+        target_height: int = 720,
+        minimum_threshold: float | None = None,
+        ocr_scale: float = 1.0,
     ) -> list:
         offset_x = offset_y = 0
         target = frame
@@ -566,24 +625,40 @@ class Vision:
                 f"识别区域超出画面：roi={region}, frame={width}x{height}",
             )
             return []
+        if ocr_scale <= 0:
+            raise ValueError("ocr_scale must be positive")
+        if ocr_scale != 1.0:
+            target = cv2.resize(
+                target,
+                None,
+                fx=ocr_scale,
+                fy=ocr_scale,
+                interpolation=cv2.INTER_CUBIC,
+            )
         try:
             key = getattr(self.task, "ocr_threshold_key", "跑图跑商 OCR 阈值")
+            configured_threshold = float(
+                self.task.config.get(
+                    key,
+                    self.task.config.get("跑图跑商 OCR 阈值", 0.2),
+                )
+            )
+            if minimum_threshold is not None:
+                configured_threshold = max(
+                    configured_threshold,
+                    float(minimum_threshold),
+                )
             boxes = self.task.ocr(
                 frame=target,
-                threshold=float(
-                    self.task.config.get(
-                        key,
-                        self.task.config.get("跑图跑商 OCR 阈值", 0.2),
-                    )
-                ),
-                target_height=720,
+                threshold=configured_threshold,
+                target_height=max(0, int(target_height)),
                 log=False,
                 name=name,
             )
         except Exception as exc:
             self._status(f"{name} OCR错误", str(exc))
             return []
-        if not offset_x and not offset_y:
+        if not offset_x and not offset_y and ocr_scale == 1.0:
             return list(boxes)
         adjusted = []
         for box in boxes:
@@ -600,9 +675,13 @@ class Vision:
                 if raw_box is not None and len(raw_box) >= 4:
                     values["x"], values["y"], values["width"], values["height"] = raw_box[:4]
             if values["x"] is not None:
-                values["x"] = float(values["x"]) + offset_x
+                values["x"] = float(values["x"]) / ocr_scale + offset_x
             if values["y"] is not None:
-                values["y"] = float(values["y"]) + offset_y
+                values["y"] = float(values["y"]) / ocr_scale + offset_y
+            if values["width"] is not None:
+                values["width"] = float(values["width"]) / ocr_scale
+            if values["height"] is not None:
+                values["height"] = float(values["height"]) / ocr_scale
             if all(values[key] is not None for key in ("x", "y", "width", "height")):
                 values["box"] = (
                     values["x"],
@@ -619,6 +698,9 @@ class Vision:
         name: str,
         roi: tuple[int, int, int, int] | None = None,
         relative_roi: tuple[float, float, float, float] | None = None,
+        target_height: int = 720,
+        minimum_threshold: float | None = None,
+        ocr_scale: float = 1.0,
     ) -> str:
         values = [
             str(getattr(box, "name", ""))
@@ -627,6 +709,9 @@ class Vision:
                 name,
                 roi,
                 relative_roi=relative_roi,
+                target_height=target_height,
+                minimum_threshold=minimum_threshold,
+                ocr_scale=ocr_scale,
             )
         ]
         text = " ".join(value for value in values if value)

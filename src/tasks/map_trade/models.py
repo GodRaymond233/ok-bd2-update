@@ -3,9 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-MF_REFERENCE_WIDTH = 1280
-MF_REFERENCE_HEIGHT = 720
-DAILY_SUBMAP_LIMIT = 21
+from src.utils.calibration import HD_720
+from src.utils.vision_models import MatchResult, TemplateSpec  # noqa: F401
+
+# map_trade vision coordinates are calibrated at 1280×720 and converted to
+# the live client resolution at runtime.
+MAP_TRADE_REFERENCE = HD_720
+DAILY_ABSORB_LIMIT = 21
+DAILY_SUMMON_LIMIT = 21
+DAILY_SUPPRESS_LIMIT = 60
+DAILY_SUBMAP_LIMIT = DAILY_ABSORB_LIMIT
 SUBMAPS_PER_CARD = 3
 MERCHANT_CARD_ID = "Q_sp6"
 PINNED_CARD_IDS = frozenset({"Q_sp6", "Q_sp18", "Q_sp20"})
@@ -37,6 +44,25 @@ class CollectionMapRole(str, Enum):
         }[self]
 
 
+class CollectionActionState(str, Enum):
+    """Durable lifecycle for one daily/card/map-role action.
+
+    ``pending`` means the map-local action is proven but its absolute daily
+    counter has not yet been reconciled.  These values are persisted as plain
+    strings so old progress files remain easy to inspect and repair.
+    """
+
+    PREEXISTING_USED = "preexisting_used"
+    ARMED = "armed"
+    CLICKED = "clicked"
+    LOCAL_DONE = "local_done"
+    PENDING = "pending"
+    SETTLED = "settled"
+    BLOCKED = "blocked"
+    VOID = "void"
+    ARCHIVED = "archived"
+
+
 @dataclass(frozen=True)
 class CollectionMapTarget:
     role: CollectionMapRole
@@ -64,38 +90,6 @@ class CardSpec:
 
 
 @dataclass(frozen=True)
-class TemplateSpec:
-    name: str
-    file_name: str
-    threshold: float = 0.76
-    roi: tuple[int, int, int, int] | None = None
-    green_mask: bool = False
-    relative_roi: tuple[float, float, float, float] | None = None
-    reference_scale: float | None = None
-    scale_ratios: tuple[float, ...] = (1.0,)
-    min_pixel_score: float | None = None
-    candidate_center_roi: tuple[float, float, float, float] | None = None
-    minimum_safe_threshold: float | None = None
-    min_zncc_score: float | None = None
-
-
-@dataclass(frozen=True)
-class MatchResult:
-    score: float
-    position: tuple[int, int]
-    size: tuple[int, int]
-    pixel_score: float = -1.0
-    zncc_score: float = -1.0
-
-    @property
-    def center(self) -> tuple[int, int]:
-        return (
-            self.position[0] + self.size[0] // 2,
-            self.position[1] + self.size[1] // 2,
-        )
-
-
-@dataclass(frozen=True)
 class CalendarEntry:
     item: str
     shop: str
@@ -109,6 +103,7 @@ class NavigationResult:
     success: bool
     state: ScreenState
     message: str = ""
+    teleport_map_opened_by_skill: bool = False
 
 
 @dataclass(frozen=True)

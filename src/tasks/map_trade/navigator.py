@@ -1,263 +1,347 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from time import monotonic
 
 import numpy as np
 
-from src.tasks.map_trade.models import (
-    CARD_BY_ID,
-    MERCHANT_CARD_ID,
-    CardSpec,
-    CollectionMapTarget,
-    MatchResult,
-    NavigationResult,
-    ScreenState,
-    TemplateSpec,
+from src.tasks.map_trade.card_status import CardStatusDetector
+from src.tasks.map_trade.models import ScreenState
+from src.tasks.map_trade.navigator_constants import (  # noqa: F401
+    AREA_MAP_BACK_TEMPLATE,
+    AREA_MAP_CHANGE_INTERVAL,
+    AREA_MAP_CHANGE_TIMEOUT,
+    AREA_MAP_CLICK_SETTLE_SECONDS,
+    AREA_MAP_OPEN_REFERENCE_POINT,
+    AREA_MAP_OPEN_RELATIVE_POINT,
+    AREA_MAP_REFERENCE_SIZE,
+    AREA_MAP_SCAN_LIMIT,
+    AREA_MAP_TELEPORT_BRIGHT_MAXIMUM_SPREAD,
+    AREA_MAP_TELEPORT_BRIGHT_MINIMUM_GRAY,
+    AREA_MAP_TELEPORT_BRIGHT_NEUTRAL_RATIO,
+    AREA_MAP_TELEPORT_BRIGHT_RADIUS_RATIO,
+    AREA_MAP_TELEPORT_CLUSTER_RADIUS,
+    BARGAIN_CONFIRM_POINT,
+    BARGAIN_POINT,
+    BARGAIN_SHOP_CONFIRM_POPUP_KEYWORD,
+    BARGAIN_SHOP_CONFIRM_STABLE_HITS,
+    CHAPTER_HOME_POINT,
+    CLASSIFY_CARD_MENU_CATEGORY_RELATIVE_ROI,
+    CLASSIFY_CARD_MENU_TITLE_RELATIVE_ROI,
+    CLASSIFY_COOKING_MATERIALS_RELATIVE_ROI,
+    CLASSIFY_COOKING_TITLE_RELATIVE_ROI,
+    CLASSIFY_LOADING_RELATIVE_ROI,
+    CLASSIFY_SHOP_TABS_RELATIVE_ROI,
+    CLASSIFY_SHOP_TITLE_RELATIVE_ROI,
+    DISCOUNT_SHOP_CLOSE_DIALOG_REGION,
+    DISCOUNT_SHOP_CLOSE_KEYWORDS,
+    DISCOUNT_SHOP_CLOSE_POINT,
+    DISCOUNT_SHOP_CLOSE_TIMEOUT,
+    FIRST_CARD_CONFIRM_REGION,
+    FIRST_CARD_INSERT_REGION,
+    FIRST_CARD_SKIP_TEMPLATE,
+    HAND_TEMPLATE,
+    HOME_BRIGHTNESS_THRESHOLD,
+    HOME_TEMPLATES,
+    LOADING_TEMPLATE,
+    MERCHANT_CLICK_LOCATION_FAILURE_MESSAGE,
+    MERCHANT_CLICK_LOCATION_TEMPLATE,
+    MERCHANT_DIALOG_CONFIRM_TIMEOUT,
+    OVERLAP_ARROW_TEMPLATE,
+    PROBE_QUICK_SWITCH_SCROLL_AMOUNT,
+    PROBE_QUICK_SWITCH_SCROLL_COUNT,
+    PROBE_QUICK_SWITCH_SCROLL_INTERVAL_SECONDS,
+    PROBE_QUICK_SWITCH_SCROLL_POINT,
+    PROBE_QUICK_SWITCH_SCROLL_SETTLE_SECONDS,
+    PROBE_QUICK_SWITCH_SCROLL_STEPS,
+    PROBE_STORY_BADGE_CONFIRM_SECONDS,
+    Q_SP6_BARGAIN_OCR_TIMEOUT,
+    Q_SP6_BARGAIN_RECHECK_DELAY,
+    Q_SP6_SHOP_PAGE_KEYWORDS,
+    Q_SP6_SHOP_PAGE_OCR_INTERVAL,
+    Q_SP6_SHOP_PRIORITY_TIMEOUT,
+    Q_SP6_STORY_NUMBER,
+    QUICK_SWITCH_CARTRIDGE_REGION,
+    QUICK_SWITCH_PAGE_KEYWORDS,
+    QUICK_SWITCH_SCROLL_FOCUS_POINT,
+    QUICK_SWITCH_SCROLL_INTERVAL,
+    QUICK_SWITCH_SCROLL_POINT,
+    QUICK_SWITCH_SCROLL_RESET_AMOUNT,
+    QUICK_SWITCH_SCROLL_RESET_COUNT,
+    QUICK_SWITCH_SCROLL_SCAN_STEPS,
+    QUICK_SWITCH_SCROLL_SETTLE_SECONDS,
+    QUICK_SWITCH_SCROLL_UP_AMOUNT,
+    QUICK_SWITCH_SCROLL_UP_COUNT,
+    QUICK_SWITCH_TEMPLATE,
+    RETURN_HOME_TIMEOUT,
+    SANDBOX_CONFIRM_ACTION_TEMPLATES,
+    SANDBOX_INTERACTION_PROBE_INTERVAL,
+    SANDBOX_INTERACTION_PROBE_TIMEOUT,
+    SANDBOX_MAP_SETTLE_SECONDS,
+    SANDBOX_MAP_TELEPORT_TEMPLATE,
+    SANDBOX_MAP_TELEPORT_TIMEOUT,
+    SANDBOX_NAVIGATION_CONFIRM_TIMEOUT,
+    SANDBOX_NAVIGATION_MAP_TIMEOUT,
+    SANDBOX_NAVIGATION_OCR_INTERVAL,
+    SANDBOX_NAVIGATION_OPEN_SETTLE_SECONDS,
+    SANDBOX_NAVIGATION_OPEN_TEMPLATES,
+    SANDBOX_NAVIGATION_OPEN_TIMEOUT,
+    SANDBOX_NAVIGATION_PAGE_KEYWORDS,
+    SANDBOX_NAVIGATION_PIN_TEMPLATE,
+    SANDBOX_NAVIGATION_RUN_TEMPLATE,
+    SANDBOX_NAVIGATION_TELEPORT_SETTLE_SECONDS,
+    SANDBOX_NAVIGATION_WALK_TIMEOUT,
+    SANDBOX_SKILL_GROUP_PIXEL_SCORE,
+    SANDBOX_SKILL_GROUP_SCALE_RATIOS,
+    SANDBOX_SKILL_GROUP_SEARCH_ROI,
+    SANDBOX_SKILL_GROUP_SWITCH_SETTLE_SECONDS,
+    SANDBOX_SKILL_GROUP_TEMPLATE_SCORE,
+    SANDBOX_SKILL_GROUP_ZNCC_SCORE,
+    SANDBOX_SKILL_SELECTED_YELLOW_MIN_RATIO,
+    SANDBOX_SKILL_SLOT_1_CENTER_ROI,
+    SANDBOX_SKILL_SLOT_1_REFERENCE_CENTER,
+    SANDBOX_SKILL_SLOT_1_RELATIVE_POINT,
+    SANDBOX_SKILL_SLOT_1_SELECTED_TEMPLATE,
+    SANDBOX_SKILL_SLOT_1_UNSELECTED_TEMPLATE,
+    SANDBOX_SKILL_SLOT_2_CENTER_ROI,
+    SANDBOX_SKILL_SLOT_2_REFERENCE_CENTER,
+    SANDBOX_SKILL_SLOT_2_SELECTED_TEMPLATE,
+    SANDBOX_SKILL_SLOT_2_UNSELECTED_TEMPLATE,
+    SANDBOX_SKILL_STATE_TEMPLATES,
+    SANDBOX_SKILL_UNSELECTED_YELLOW_MAX_RATIO,
+    SANDBOX_TELEPORT_SKILL_FAILURE_GROUPS,
+    SANDBOX_TELEPORT_SKILL_POLL_INTERVAL,
+    SANDBOX_TELEPORT_SKILL_REFERENCE_CENTER,
+    SANDBOX_TELEPORT_SKILL_RELATIVE_POINT,
+    SANDBOX_TELEPORT_SKILL_TEMPLATE,
+    SANDBOX_TELEPORT_SKILL_TIMEOUT,
+    SANDBOX_TEMPLATES,
+    SHOP_PAGE_OCR_KEYWORDS,
+    STORY_BADGE_CANDIDATE_PIXEL_SCORE,
+    STORY_BADGE_CANDIDATE_SCORE,
+    STORY_BADGE_CANDIDATE_ZNCC_SCORE,
+    STORY_BADGE_CENTER_REGION,
+    STORY_BADGE_CLUSTER_RADIUS,
+    STORY_BADGE_MIN_MARGIN,
+    STORY_BADGE_OCR_BINARY_THRESHOLD,
+    STORY_BADGE_OCR_HORIZONTAL_BORDER,
+    STORY_BADGE_OCR_INNER_HEIGHT,
+    STORY_BADGE_OCR_INNER_RADIUS_RATIO,
+    STORY_BADGE_OCR_MIN_CONFIDENCE,
+    STORY_BADGE_OCR_VERTICAL_BORDER,
+    STORY_BADGE_PIXEL_SCORE,
+    STORY_BADGE_SPECS,
+    STORY_BADGE_TEMPLATE_SCORE,
+    STORY_CATEGORY_HIGHLIGHT_MIN_RATIO,
+    STORY_CATEGORY_HIGHLIGHT_REGION,
+    STORY_CATEGORY_POINT,
+    STORY_SANDBOX_STABLE_HITS,
+    STORY_SANDBOX_SWITCH_WINDOW,
+    STORY_SANDBOX_SWITCH_WINDOW_HITS,
+    TELEPORT_GENERATION_OCR_INTERVAL,
+    TELEPORT_GENERATION_OCR_KEYWORDS,
+    TELEPORT_GENERATION_OCR_TIMEOUT,
+    TELEPORT_INTERACTION_CLICK_DELAY,
+    TELEPORT_INTERACTION_POLL_INTERVAL,
+    TELEPORT_INTERACTION_TIMEOUT,
+    TELEPORT_MAP_BACKWARD_TEMPLATE,
+    TELEPORT_MAP_FIRST_PAGE_LIMIT,
+    TELEPORT_MAP_FORWARD_TEMPLATE,
+    TELEPORT_MAP_OPEN_TIMEOUT,
+    TELEPORT_MAP_RETURN_REFERENCE_POINT,
+    TELEPORT_MAP_RETURN_RELATIVE_POINT,
+    TELEPORT_MAP_SKILL_TEMPLATE,
+    TELEPORT_MAP_TELEPORT_CIRCLE_TEMPLATE,
+    TELEPORT_MAP_TELEPORT_CIRCLE_TEMPLATES,
+    TELEPORT_MAP_TITLE_OCR_REFERENCE_ROI,
+    TELEPORT_MAP_TITLE_OCR_RELATIVE_ROI,
+    TELEPORT_MAP_TRAVEL_SETTLE_SECONDS,
+    TRADE_MERCHANT_CONTEXT_TEMPLATE,
+    AreaMapContext,
+    LocatedStoryCard,
+    ProbedStoryCard,
+    SandboxConfirmation,
+    StoryBadgeCandidate,
+    StoryBadgeDetection,
+    _sandbox_skill_template,
 )
+from src.tasks.map_trade.navigator_sandbox import SandboxNavigationMixin
+from src.tasks.map_trade.navigator_story import StoryCardNavigationMixin
+from src.tasks.map_trade.navigator_trade import TradeNavigationMixin
 from src.tasks.map_trade.vision import Vision, normalize_text
 from src.utils.home_confirmation import (
     HOME_GACHA_OCR_RELATIVE_ROI,
     home_confirmation_passes,
 )
 
-HOME_TEMPLATES = (
-    TemplateSpec("主页", "home.png", 0.72, min_pixel_score=0.80),
-    TemplateSpec(
-        "主页冰淇淋",
-        "image/green/MainHomeIceGE.png",
-        0.72,
-        green_mask=True,
-        min_pixel_score=0.80,
-    ),
-    TemplateSpec(
-        "主页米饭",
-        "image/green/MainHomeRIceGE.png",
-        0.72,
-        green_mask=True,
-        min_pixel_score=0.80,
-    ),
-)
-QUICK_SWITCH_TEMPLATE = TemplateSpec(
-    "快速切换按钮",
-    "image/green/QuickSwitchPlayIco.png",
-    0.88,
-    relative_roi=(0.25, 0.85, 0.65, 1.0),
-    scale_ratios=(0.95, 0.975, 1.0, 1.025, 1.05),
-    min_pixel_score=0.85,
-    candidate_center_roi=(650 / 1920, 950 / 1080, 1050 / 1920, 1045 / 1080),
-    minimum_safe_threshold=0.88,
-    min_zncc_score=0.85,
-)
-Q_SP6_SHOP_TEMPLATE = TemplateSpec(
-    "Q_sp6商店按钮",
-    "Q_sp6_shop.png",
-    0.78,
-    scale_ratios=(0.90, 0.95, 1.0, 1.05, 1.10),
-    min_pixel_score=0.72,
-)
-Q_SP6_SHOP_VERTICAL_OFFSET = 150 / 1080
-Q_SP6_SHOP_PRIORITY_TIMEOUT = 3.0
-Q_SP6_SHOP_PAGE_KEYWORDS = ("仓库", "严加管理")
-Q_SP6_SHOP_PAGE_OCR_INTERVAL = 0.25
-Q_SP6_BARGAIN_RECHECK_DELAY = 0.5
-Q_SP6_BARGAIN_OCR_TIMEOUT = 10.0
-QUICK_SWITCH_PAGE_KEYWORDS = (
-    "店长游戏卡",
-    "剧情游戏卡",
-    "角色游戏卡",
-    "玩法游戏卡",
-    "最近",
-    "活动游戏卡",
-)
-STORY_CATEGORY_POINT = (557 / 1920, 877 / 1080)
-STORY_CATEGORY_HIGHLIGHT_REGION = (
-    445 / 1920,
-    840 / 1080,
-    670 / 1920,
-    915 / 1080,
-)
-STORY_CATEGORY_HIGHLIGHT_MIN_RATIO = 0.05
-QUICK_SWITCH_CARTRIDGE_REGION = (0.0, 908 / 1080, 1.0, 1.0)
-QUICK_SWITCH_SCROLL_POINT = (960 / 1920, 970 / 1080)
-QUICK_SWITCH_SCROLL_RESET_AMOUNT = -1
-QUICK_SWITCH_SCROLL_RESET_COUNT = 24
-QUICK_SWITCH_SCROLL_UP_AMOUNT = 1
-QUICK_SWITCH_SCROLL_UP_COUNT = 2
-QUICK_SWITCH_SCROLL_SCAN_STEPS = 16
-QUICK_SWITCH_SCROLL_INTERVAL = 0.08
-QUICK_SWITCH_SCROLL_SETTLE_SECONDS = 0.35
-STORY_BADGE_TEMPLATE_SCORE = 0.95
-STORY_BADGE_PIXEL_SCORE = 0.95
-STORY_BADGE_MIN_MARGIN = 0.05
-STORY_BADGE_CANDIDATE_SCORE = 0.70
-STORY_BADGE_CLUSTER_RADIUS = 12
-Q_SP6_STORY_NUMBER = 6
-STORY_BADGE_SPECS = tuple(
-    (
-        number,
-        TemplateSpec(
-            name=f"剧情游戏卡{number}角标",
-            file_name=(
-                f"quick_switch_cartridges/story_cartridge_badge_{number:02d}.png"
-            ),
-            threshold=STORY_BADGE_TEMPLATE_SCORE,
-            relative_roi=QUICK_SWITCH_CARTRIDGE_REGION,
-            min_pixel_score=STORY_BADGE_PIXEL_SCORE,
-        ),
-    )
-    for number in range(1, 21)
-)
-BARGAIN_POINT = (191 / 1920, 900 / 1080)
-BARGAIN_CONFIRM_POINT = (1047 / 1920, 652 / 1080)
-Q_SP6_BARGAIN_CONFIRM_DELAY = 1.0
-DISCOUNT_SHOP_CLOSE_DIALOG_REGION = (
-    700 / 1920,
-    382 / 1080,
-    1220 / 1920,
-    694 / 1080,
-)
-DISCOUNT_SHOP_CLOSE_KEYWORDS = (
-    "折扣商店结束",
-    "是否关闭折扣商店",
-)
-DISCOUNT_SHOP_CLOSE_POINT = (1045 / 1920, 639 / 1080)
-CHAPTER_HOME_POINT = (1797 / 1920, 63 / 1080)
-DISCOUNT_SHOP_CLOSE_TIMEOUT = 5.0
-RETURN_HOME_TIMEOUT = 10.0
-HOME_BRIGHTNESS_THRESHOLD = 0.75
-SANDBOX_TEMPLATES = (
-    TemplateSpec("箱庭图钉", "image/pin.png", 0.76, roi=(1080, 610, 170, 100)),
-    TemplateSpec(
-        "箱庭奔跑",
-        "image/green/Run.png",
-        0.72,
-        roi=(1120, 590, 150, 125),
-        green_mask=True,
-    ),
-)
-LOADING_TEMPLATE = TemplateSpec("加载页面", "image/UI_loading_black.png", 0.70)
-MERCHANT_DIALOG_TEMPLATE = TemplateSpec(
-    "商人对话", "image/Mer_Dialog_TalMed.png", 0.72, roi=(930, 15, 280, 70)
-)
-MERCHANT_ICON_TEMPLATE = TemplateSpec(
-    "商人交互", "image/green/Merchant_IcoGE.png", 0.74, green_mask=True
-)
-MAP_MERCHANT_TEMPLATE = TemplateSpec(
-    "小地图商人", "image/Map_Merchant.png", 0.72, roi=(130, 110, 210, 190)
-)
-NAV_GUIDE_TEMPLATE = TemplateSpec(
-    "小地图导航", "image/Nvi_SandGuideButt.png", 0.72, roi=(180, 45, 210, 110)
-)
-AUTO_NAV_TEMPLATE = TemplateSpec(
-    "自动移动", "image/AutoNvi_ico.png", 0.72, roi=(570, 580, 140, 120)
-)
 
-
-@dataclass(frozen=True)
-class StoryBadgeCandidate:
-    number: int
-    result: MatchResult
-
-
-@dataclass(frozen=True)
-class StoryBadgeDetection:
-    best: StoryBadgeCandidate
-    runner_up: StoryBadgeCandidate | None
-
-    @property
-    def margin(self) -> float:
-        if self.runner_up is None:
-            return -1.0
-        return self.best.result.score - self.runner_up.result.score
-
-
-@dataclass(frozen=True)
-class AreaMapContext:
-    frame_shape: tuple[int, ...]
-    raw_text: str
-    normalized_text: str
-    is_area_map: bool
-    candidate_target_keys: tuple[str, ...]
-    resolved_target_key: str | None
-    left_arrow: MatchResult | None
-    right_arrow: MatchResult | None
-    teleports: tuple[MatchResult, ...]
-    overlap_arrow: MatchResult | None
-    back_button: MatchResult | None
-
-
-HAND_TEMPLATE = TemplateSpec(
-    "传送阵交互",
-    "image/green/IcoHand.png",
-    0.74,
-    green_mask=True,
-)
-NAV_TELEPORT_TEMPLATE = TemplateSpec(
-    "导航图传送阵", "image/green/Nvi_TpCircleMap.png", 0.72
-)
-MAP_LEFT_TEMPLATE = TemplateSpec(
-    "区域图左箭头", "image/green/TpMapLeft.png", 0.72
-)
-MAP_RIGHT_TEMPLATE = TemplateSpec(
-    "区域图右箭头", "image/green/TpMapRight.png", 0.72
-)
-TELEPORT_MAP_TEMPLATES = (
-    TemplateSpec("区域图传送阵绿幕", "image/TpCircleMapGE.png", 0.72),
-    TemplateSpec("区域图传送阵", "image/TpCircleMap.png", 0.72),
-)
-OVERLAP_ARROW_TEMPLATE = TemplateSpec(
-    "传送阵重叠箭头",
-    "image/green/map_tcArrowGE.png",
-    0.72,
-)
-AREA_MAP_BACK_TEMPLATE = TemplateSpec("区域图返回", "back.png", 0.78)
-AREA_MAP_SCAN_LIMIT = 24
-AREA_MAP_CHANGE_TIMEOUT = 3.0
-AREA_MAP_CHANGE_INTERVAL = 0.25
-AREA_MAP_CLICK_SETTLE_SECONDS = 0.5
-AREA_MAP_TELEPORT_CLUSTER_RADIUS = 24
-FIRST_CARD_INSERT_REGION = (413, 481, 440, 132)
-FIRST_CARD_SKIP_TEMPLATE = TemplateSpec(
-    "首次卡带跳过",
-    "image/UI_Skip.png",
-    0.72,
-    roi=(915, 9, 265, 68),
-)
-FIRST_CARD_CONFIRM_REGION = (626, 368, 186, 293)
-
-
-class Navigator:
+class Navigator(StoryCardNavigationMixin, SandboxNavigationMixin, TradeNavigationMixin):
     def __init__(self, task, vision: Vision) -> None:
         self.task = task
         self.vision = vision
+        self.card_status = CardStatusDetector(vision)
 
     def classify(self, frame=None) -> ScreenState:
+        """Classify shared map states without trade- or PVP-specific templates."""
+
+        started = monotonic()
+        state = self._classify_frame(frame)
+        self._status("界面分类耗时", f"{monotonic() - started:.3f}s")
+        return state
+
+    def _classify_frame(self, frame) -> ScreenState:
         frame = self.vision.capture() if frame is None else frame
         if self._home_confirmation_signals(frame)[0]:
             return ScreenState.HOME
-        if self.vision.match(frame, MERCHANT_DIALOG_TEMPLATE).score >= self.vision.threshold_for(
-            MERCHANT_DIALOG_TEMPLATE
-        ):
-            return ScreenState.MERCHANT_DIALOG
         if self.vision.match(frame, LOADING_TEMPLATE).score >= self.vision.threshold_for(
             LOADING_TEMPLATE
         ):
             return ScreenState.LOADING
+        sandbox_signals = []
+        sandbox_confirmed = False
         for spec in SANDBOX_TEMPLATES:
-            if self.vision.match(frame, spec).score >= self.vision.threshold_for(spec):
-                return ScreenState.SANDBOX
+            result = self.vision.match(frame, spec)
+            passed = self.vision.passes(result, spec)
+            sandbox_confirmed = sandbox_confirmed or passed
+            sandbox_signals.append(
+                (
+                    f"{spec.name}={'pass' if passed else 'miss'}"
+                    f"(m={result.score:.3f},p={result.pixel_score:.3f},"
+                    f"z={result.zncc_score:.3f})"
+                )
+            )
+        self._status("箱庭确认信号", "; ".join(sandbox_signals))
+        if sandbox_confirmed:
+            return ScreenState.SANDBOX
 
-        text = normalize_text(self.vision.simplify(self.vision.ocr_text(frame, "界面分类")))
-        if "购买" in text and "出售" in text:
+        loading_text = normalize_text(
+            self.vision.simplify(
+                self.vision.ocr_text(
+                    frame,
+                    "界面分类加载",
+                    relative_roi=CLASSIFY_LOADING_RELATIVE_ROI,
+                )
+            )
+        )
+        if "browndust" in loading_text:
+            return ScreenState.LOADING
+        shop_text = normalize_text(
+            self.vision.simplify(
+                self.vision.ocr_text(
+                    frame,
+                    "界面分类商店页",
+                    relative_roi=CLASSIFY_SHOP_TABS_RELATIVE_ROI,
+                )
+                + " "
+                + self.vision.ocr_text(
+                    frame,
+                    "界面分类商店标题",
+                    relative_roi=CLASSIFY_SHOP_TITLE_RELATIVE_ROI,
+                )
+            )
+        )
+        if self._shop_page_text(shop_text):
             return ScreenState.SHOP
-        if "移动魔法阵" in text:
+        area_map_text = normalize_text(
+            self.vision.simplify(
+                self.vision.ocr_text(
+                    frame,
+                    "界面分类传送阵",
+                    relative_roi=TELEPORT_MAP_TITLE_OCR_RELATIVE_ROI,
+                )
+            )
+        )
+        if "移动魔法阵" in area_map_text:
             return ScreenState.AREA_MAP
-        if "游戏卡珍藏" in text or "剧情游戏卡" in text:
+        card_text = normalize_text(
+            self.vision.simplify(
+                self.vision.ocr_text(
+                    frame,
+                    "界面分类卡带标题",
+                    relative_roi=CLASSIFY_CARD_MENU_TITLE_RELATIVE_ROI,
+                )
+                + " "
+                + self.vision.ocr_text(
+                    frame,
+                    "界面分类卡带页",
+                    relative_roi=CLASSIFY_CARD_MENU_CATEGORY_RELATIVE_ROI,
+                )
+            )
+        )
+        if "游戏卡珍藏" in card_text or "剧情游戏卡" in card_text:
             return ScreenState.CARD_MENU
-        if "所需材料" in text and "料理" in text:
+        cooking_text = normalize_text(
+            self.vision.simplify(
+                self.vision.ocr_text(
+                    frame,
+                    "界面分类料理标题",
+                    relative_roi=CLASSIFY_COOKING_TITLE_RELATIVE_ROI,
+                )
+                + " "
+                + self.vision.ocr_text(
+                    frame,
+                    "界面分类料理材料",
+                    relative_roi=CLASSIFY_COOKING_MATERIALS_RELATIVE_ROI,
+                )
+            )
+        )
+        if "所需材料" in cooking_text and "料理" in cooking_text:
             return ScreenState.COOKING
         return ScreenState.UNKNOWN
+
+    def classify_trade(self, frame=None) -> ScreenState:
+        """Classify trade-only merchant context before falling back to shared states."""
+
+        started = monotonic()
+        state = self._classify_trade_frame(frame)
+        self._status("跑商界面分类耗时", f"{monotonic() - started:.3f}s")
+        return state
+
+    def _classify_trade_frame(self, frame) -> ScreenState:
+        frame = self.vision.capture() if frame is None else frame
+        if self._home_confirmation_signals(frame)[0]:
+            return ScreenState.HOME
+
+        merchant = self.vision.match(frame, TRADE_MERCHANT_CONTEXT_TEMPLATE)
+        merchant_passed = merchant.score >= self.vision.threshold_for(
+            TRADE_MERCHANT_CONTEXT_TEMPLATE
+        )
+        self._status(
+            "跑商商人模板",
+            (
+                f"{'pass' if merchant_passed else 'miss'}; "
+                f"match={merchant.score:.3f}; pixel={merchant.pixel_score:.3f}; "
+                f"zncc={merchant.zncc_score:.3f}"
+            ),
+        )
+        if merchant_passed:
+            # 折扣商店页的标题牌与商人对话共用 UI 框架，模板会同时命中。
+            # 该判断只属于跑商流程；剧情箱庭和 PVP 均不得调用本方法。
+            shop_text = normalize_text(
+                self.vision.simplify(
+                    self.vision.ocr_text(
+                        frame,
+                        "跑商界面分类商店页",
+                        relative_roi=CLASSIFY_SHOP_TABS_RELATIVE_ROI,
+                    )
+                    + " "
+                    + self.vision.ocr_text(
+                        frame,
+                        "跑商界面分类商店标题",
+                        relative_roi=CLASSIFY_SHOP_TITLE_RELATIVE_ROI,
+                    )
+                )
+            )
+            if self._shop_page_text(shop_text):
+                return ScreenState.SHOP
+            return ScreenState.MERCHANT_DIALOG
+        return self.classify(frame)
+
+    @staticmethod
+    def _shop_page_text(text: str) -> bool:
+        """Judge the discount shop page from one frame's normalized OCR text."""
+        return all(keyword in text for keyword in SHOP_PAGE_OCR_KEYWORDS) or (
+            "购买" in text and "出售" in text
+        )
 
     def wait_state(self, wanted: set[ScreenState], timeout: float) -> ScreenState:
         end_at = monotonic() + max(0.0, timeout)
@@ -270,142 +354,21 @@ class Navigator:
             self.task.sleep(0.5)
         return last
 
+    def wait_trade_state(self, wanted: set[ScreenState], timeout: float) -> ScreenState:
+        """Wait for a running-trade state; merchant templates stay scoped here."""
+
+        end_at = monotonic() + max(0.0, timeout)
+        last = ScreenState.UNKNOWN
+        while monotonic() <= end_at:
+            last = self.classify_trade()
+            self._status("跑商导航状态", last.value)
+            if last in wanted:
+                return last
+            self.task.sleep(0.5)
+        return last
+
     def _loading_timeout(self) -> float:
         return max(10.0, float(self.task.config.get("加载页面等待秒数", 45.0)))
-
-    def enter_q_sp6_buy_flow(self) -> NavigationResult:
-        """Run the user-confirmed buy entry flow and stop after bargain confirmation."""
-
-        self._status("导航状态", "优先识别Q_sp6商店按钮")
-        shop_opened = self._enter_q_sp6_shop(
-            Q_SP6_SHOP_PRIORITY_TIMEOUT,
-            log_timeout=False,
-        )
-        if not shop_opened:
-            self._status("导航状态", "确认主页")
-            story_menu = self._open_story_quick_switcher()
-            if not story_menu.success:
-                return story_menu
-            self._status("导航状态", "识别剧情游戏卡6角标")
-            badge_match = self._wait_for_story_badge(Q_SP6_STORY_NUMBER)
-            if badge_match is None:
-                return NavigationResult(False, self.classify(), "未唯一确认剧情游戏卡6角标")
-            badge_frame, badge = badge_match
-            self._status(
-                "剧情游戏卡6角标点击中心",
-                (
-                    f"center=({badge.best.result.center[0]},"
-                    f"{badge.best.result.center[1]}), "
-                    f"match={badge.best.result.score:.3f}, "
-                    f"pixel={badge.best.result.pixel_score:.3f}, "
-                    f"margin={badge.margin:.3f}"
-                ),
-            )
-            self.vision.click_client(
-                badge.best.result.center,
-                badge_frame.shape,
-                after_sleep=0.0,
-            )
-
-            self._status("导航状态", "持续识别Q_sp6商店按钮")
-            shop_opened = self._enter_q_sp6_shop(
-                self._loading_timeout(),
-                log_timeout=True,
-            )
-            if not shop_opened:
-                return NavigationResult(False, self.classify(), "未识别到Q_sp6_shop.png")
-
-        self.task.sleep(Q_SP6_BARGAIN_RECHECK_DELAY)
-        if not self._wait_for_ocr_keywords(
-            ("砍价",),
-            Q_SP6_BARGAIN_OCR_TIMEOUT,
-            "砍价入口",
-        ):
-            return NavigationResult(False, self.classify(), "商店页面未识别到砍价入口")
-        self.task.operate_click(*BARGAIN_POINT, after_sleep=0.0)
-
-        bargain_tip = "使用砍价技能后可享受商店折扣价"
-        if not self._wait_for_ocr_keywords((bargain_tip,), 10.0, "砍价说明"):
-            return NavigationResult(False, self.classify(), "未识别到砍价技能折扣说明")
-        self.task.operate_click(
-            *BARGAIN_CONFIRM_POINT,
-            after_sleep=Q_SP6_BARGAIN_CONFIRM_DELAY,
-        )
-        return NavigationResult(True, ScreenState.MERCHANT_DIALOG, "已点击砍价确认")
-
-    def _enter_q_sp6_shop(
-        self,
-        timeout: float,
-        *,
-        log_timeout: bool,
-        interval: float = 0.5,
-    ) -> bool:
-        end_at = monotonic() + max(0.0, timeout)
-        click_count = 0
-        last_score = -1.0
-        last_pixel_score = -1.0
-        while monotonic() <= end_at:
-            frame = self.vision.capture()
-            shop_match = self.vision.match(frame, Q_SP6_SHOP_TEMPLATE)
-            last_score = shop_match.score
-            last_pixel_score = shop_match.pixel_score
-            self._status(
-                Q_SP6_SHOP_TEMPLATE.name,
-                f"{last_score:.3f}/{last_pixel_score:.3f}",
-            )
-            if self.vision.passes(shop_match, Q_SP6_SHOP_TEMPLATE):
-                shop_click_point = self._q_sp6_shop_click_point(
-                    shop_match,
-                    frame.shape,
-                )
-                click_count += 1
-                self._status(
-                    "Q_sp6商店点击",
-                    f"第{click_count}次 "
-                    f"{shop_match.center[0]},{shop_match.center[1]} -> "
-                    f"{shop_click_point[0]},{shop_click_point[1]}",
-                )
-                self.vision.click_client(
-                    shop_click_point,
-                    frame.shape,
-                    after_sleep=0.0,
-                )
-                if self._wait_for_ocr_keywords(
-                    Q_SP6_SHOP_PAGE_KEYWORDS,
-                    self._loading_timeout(),
-                    "商店页面",
-                    interval=Q_SP6_SHOP_PAGE_OCR_INTERVAL,
-                ):
-                    self._status("Q_sp6商店进入", f"成功，点击{click_count}次")
-                    return True
-                break
-            self.task.sleep(interval)
-
-        if log_timeout:
-            self.task.log_warning(
-                "跑商：未在限定时间内进入Q_sp6商店，"
-                f"点击{click_count}次，最后匹配="
-                f"{last_score:.3f}/{last_pixel_score:.3f}。"
-            )
-        return False
-
-    @staticmethod
-    def _q_sp6_shop_click_point(
-        match: MatchResult,
-        frame_shape: tuple[int, ...],
-    ) -> tuple[int, int]:
-        height, width = frame_shape[:2]
-        center_x, center_y = match.center
-        return (
-            max(0, min(width - 1, center_x)),
-            max(
-                0,
-                min(
-                    height - 1,
-                    center_y + round(height * Q_SP6_SHOP_VERTICAL_OFFSET),
-                ),
-            ),
-        )
 
     def _wait_for_cartridge_home(self, timeout: float = 10.0, interval: float = 0.35) -> bool:
         end_at = monotonic() + max(0.0, timeout)
@@ -421,7 +384,10 @@ class Navigator:
                 last_pixel_score,
                 last_brightness,
                 last_gacha_text,
-            ) = self._home_confirmation_signals(frame)
+            ) = self._home_confirmation_signals(
+                frame,
+                clear_context="跑商/跑图确认主页",
+            )
             if confirmed:
                 return True
             self.task.sleep(interval)
@@ -435,13 +401,14 @@ class Navigator:
     def _home_confirmation_signals(
         self,
         frame: np.ndarray,
+        clear_context: str | None = None,
     ) -> tuple[bool, float, float, float, str]:
         candidates = [(spec, self.vision.match(frame, spec)) for spec in HOME_TEMPLATES]
         spec, result = max(candidates, key=lambda value: value[1].score)
         brightness = self.vision.template_brightness_ratio(frame, spec, result)
         button_found = self.vision.passes(result, spec)
         gacha_text = ""
-        if button_found and brightness >= HOME_BRIGHTNESS_THRESHOLD:
+        if button_found:
             gacha_text = self.vision.ocr_text(
                 frame,
                 "主页抽抽乐",
@@ -459,336 +426,20 @@ class Navigator:
             brightness_threshold=HOME_BRIGHTNESS_THRESHOLD,
             gacha_ocr_text=gacha_text,
         )
+        clear_announcement = getattr(
+            self.task,
+            "clear_temporary_home_announcement_if_needed",
+            None,
+        )
+        if clear_context is not None and not confirmed and callable(clear_announcement):
+            clear_announcement(
+                button_found=button_found,
+                brightness_ratio=brightness,
+                brightness_threshold=HOME_BRIGHTNESS_THRESHOLD,
+                gacha_ocr_text=gacha_text,
+                context=clear_context,
+            )
         return confirmed, result.score, result.pixel_score, brightness, gacha_text
-
-    def _wait_for_quick_switch_page(self, timeout: float = 10.0) -> bool:
-        return self._wait_for_ocr_keywords(
-            QUICK_SWITCH_PAGE_KEYWORDS,
-            timeout,
-            "卡带选择页",
-        )
-
-    def _open_story_quick_switcher(self) -> NavigationResult:
-        opened = self.task.open_cartridge_quick_switcher(
-            ensure_home=self._wait_for_cartridge_home,
-            click_quick_switch=lambda: self.vision.click_stable_template(
-                QUICK_SWITCH_TEMPLATE,
-                timeout=10.0,
-                after_sleep=1.0,
-            ),
-            confirm_quick_switch_page=self._wait_for_quick_switch_page,
-        )
-        if not opened:
-            return NavigationResult(
-                False,
-                self.classify(),
-                "无法从主页打开快速切换卡带页面",
-            )
-
-        self._status("导航状态", "选择剧情游戏卡")
-        self.task.operate_click(*STORY_CATEGORY_POINT, after_sleep=0.5)
-        if not self._wait_for_story_category():
-            return NavigationResult(
-                False,
-                self.classify(),
-                "点击后未确认剧情游戏卡类别高亮",
-            )
-        return NavigationResult(True, ScreenState.CARD_MENU, "剧情游戏卡类别已确认")
-
-    def _wait_for_story_category(self, timeout: float = 3.0, interval: float = 0.5) -> bool:
-        end_at = monotonic() + max(0.0, timeout)
-        last_text = ""
-        last_highlight_ratio = 0.0
-        story_label = normalize_text("剧情游戏卡")
-        while monotonic() <= end_at:
-            frame = self.vision.capture()
-            text = self.vision.simplify(self.vision.ocr_text(frame, "剧情游戏卡类别"))
-            last_text = text or last_text
-            last_highlight_ratio = self.vision.bright_neutral_ratio(
-                frame,
-                STORY_CATEGORY_HIGHLIGHT_REGION,
-            )
-            self._status("剧情类别高亮", f"{last_highlight_ratio:.3f}")
-            if (
-                story_label in normalize_text(text)
-                and last_highlight_ratio >= STORY_CATEGORY_HIGHLIGHT_MIN_RATIO
-            ):
-                return True
-            self.task.sleep(interval)
-        self.task.log_warning(
-            "跑商：未确认剧情游戏卡类别高亮，"
-            f"highlight={last_highlight_ratio:.3f}, OCR={last_text or '-'}。"
-        )
-        return False
-
-    def _story_badge_detections(
-        self,
-        frame: np.ndarray,
-    ) -> tuple[StoryBadgeDetection, ...]:
-        height, width = frame.shape[:2]
-        client_scale = min(width / 1920, height / 1080)
-        peak_radius = max(2, round(5 * client_scale))
-        cluster_radius = max(4, round(STORY_BADGE_CLUSTER_RADIUS * client_scale))
-        candidates: list[StoryBadgeCandidate] = []
-        for number, spec in STORY_BADGE_SPECS:
-            matches = self.vision.match_all(
-                frame,
-                spec,
-                minimum_score=STORY_BADGE_CANDIDATE_SCORE,
-                peak_radius=peak_radius,
-            )
-            candidates.extend(StoryBadgeCandidate(number, result) for result in matches)
-
-        clusters: list[list[StoryBadgeCandidate]] = []
-        for candidate in sorted(
-            candidates,
-            key=lambda value: value.result.score,
-            reverse=True,
-        ):
-            for cluster in clusters:
-                anchor = cluster[0].result.center
-                center = candidate.result.center
-                if (
-                    (center[0] - anchor[0]) ** 2 + (center[1] - anchor[1]) ** 2
-                    <= cluster_radius**2
-                ):
-                    cluster.append(candidate)
-                    break
-            else:
-                clusters.append([candidate])
-
-        detections: list[StoryBadgeDetection] = []
-        for cluster in clusters:
-            best_by_number: dict[int, StoryBadgeCandidate] = {}
-            for candidate in cluster:
-                current = best_by_number.get(candidate.number)
-                if current is None or candidate.result.score > current.result.score:
-                    best_by_number[candidate.number] = candidate
-            ranked = sorted(
-                best_by_number.values(),
-                key=lambda value: value.result.score,
-                reverse=True,
-            )
-            if not ranked:
-                continue
-            detections.append(
-                StoryBadgeDetection(
-                    best=ranked[0],
-                    runner_up=ranked[1] if len(ranked) > 1 else None,
-                )
-            )
-        return tuple(
-            sorted(detections, key=lambda value: value.best.result.center[0])
-        )
-
-    def _find_story_badge(
-        self,
-        frame: np.ndarray,
-        target_number: int,
-    ) -> tuple[StoryBadgeDetection | None, str]:
-        detections = self._story_badge_detections(frame)
-        target_detections = [
-            value
-            for value in detections
-            if value.best.number == target_number
-            and value.best.result.score >= STORY_BADGE_TEMPLATE_SCORE
-            and value.best.result.pixel_score >= STORY_BADGE_PIXEL_SCORE
-        ]
-        if not target_detections:
-            return None, f"未达到双阈值，检测目标数={len(detections)}"
-        if len(target_detections) > 1:
-            return None, f"同一编号出现{len(target_detections)}个有效位置"
-        detection = target_detections[0]
-        if detection.runner_up is None:
-            return None, "缺少同位置次优编号，无法检查歧义"
-        if detection.margin < STORY_BADGE_MIN_MARGIN:
-            return (
-                None,
-                f"候选分差不足：{detection.margin:.3f}<{STORY_BADGE_MIN_MARGIN:.3f}",
-            )
-        return detection, ""
-
-    def _wait_for_story_badge(
-        self,
-        target_number: int,
-        timeout: float = 3.0,
-        interval: float = 0.25,
-    ) -> tuple[np.ndarray, StoryBadgeDetection] | None:
-        end_at = monotonic() + max(0.0, timeout)
-        last_reason = "未执行识别"
-        while monotonic() <= end_at:
-            frame = self.vision.capture()
-            detection, last_reason = self._find_story_badge(frame, target_number)
-            if detection is not None:
-                self._status(
-                    "剧情角标",
-                    (
-                        f"{target_number}: match={detection.best.result.score:.3f}, "
-                        f"pixel={detection.best.result.pixel_score:.3f}, "
-                        f"margin={detection.margin:.3f}"
-                    ),
-                )
-                return frame, detection
-            self._status("剧情角标", f"{target_number}: {last_reason}")
-            self.task.sleep(interval)
-        self.task.log_warning(f"跑商：剧情游戏卡{target_number}角标识别失败：{last_reason}。")
-        return None
-
-    @staticmethod
-    def _story_badge_reason_is_ambiguous(reason: str) -> bool:
-        return reason.startswith(
-            (
-                "同一编号出现",
-                "缺少同位置次优编号",
-                "候选分差不足",
-            )
-        )
-
-    def _wait_for_story_badge_with_scroll(
-        self,
-        target_number: int,
-        scan_steps: int = QUICK_SWITCH_SCROLL_SCAN_STEPS,
-    ) -> tuple[np.ndarray, StoryBadgeDetection] | None:
-        """Find one story badge, using the quick bar's mouse-wheel direction."""
-
-        last_reason = "未执行识别"
-
-        def scan_current_page() -> tuple[np.ndarray, StoryBadgeDetection] | None:
-            nonlocal last_reason
-            frame = self.vision.capture()
-            detection, last_reason = self._find_story_badge(frame, target_number)
-            if detection is None:
-                self._status("剧情角标", f"{target_number}: {last_reason}")
-                return None
-            self._status(
-                "剧情角标",
-                (
-                    f"{target_number}: match={detection.best.result.score:.3f}, "
-                    f"pixel={detection.best.result.pixel_score:.3f}, "
-                    f"margin={detection.margin:.3f}"
-                ),
-            )
-            return frame, detection
-
-        found = scan_current_page()
-        if found is not None:
-            return found
-        if self._story_badge_reason_is_ambiguous(last_reason):
-            self.task.log_warning(
-                f"跑图跑商：剧情游戏卡{target_number}角标存在歧义：{last_reason}。"
-            )
-            return None
-
-        # The quick selector runs horizontally. A downward wheel moves toward
-        # larger card numbers, so first reset to that edge. Scanning then uses
-        # the user-calibrated upward wheel: cards move right, large to small.
-        self._status("卡带滚轮", "向下复位到大编号端")
-        self.task._scroll_client(
-            QUICK_SWITCH_SCROLL_POINT,
-            QUICK_SWITCH_SCROLL_RESET_AMOUNT,
-            count=QUICK_SWITCH_SCROLL_RESET_COUNT,
-            interval=QUICK_SWITCH_SCROLL_INTERVAL,
-            after_sleep=QUICK_SWITCH_SCROLL_SETTLE_SECONDS,
-        )
-
-        steps = max(0, int(scan_steps))
-        for step in range(steps + 1):
-            found = scan_current_page()
-            if found is not None:
-                return found
-            if self._story_badge_reason_is_ambiguous(last_reason):
-                self.task.log_warning(
-                    f"跑图跑商：剧情游戏卡{target_number}角标存在歧义：{last_reason}。"
-                )
-                return None
-            if step >= steps:
-                break
-            self._status("卡带滚轮", f"向上扫描 {step + 1}/{steps}")
-            self.task._scroll_client(
-                QUICK_SWITCH_SCROLL_POINT,
-                QUICK_SWITCH_SCROLL_UP_AMOUNT,
-                count=QUICK_SWITCH_SCROLL_UP_COUNT,
-                interval=QUICK_SWITCH_SCROLL_INTERVAL,
-                after_sleep=QUICK_SWITCH_SCROLL_SETTLE_SECONDS,
-            )
-
-        self.task.log_warning(
-            f"跑图跑商：滚动快速选择栏后仍未确认剧情游戏卡{target_number}角标："
-            f"{last_reason}。"
-        )
-        return None
-
-    def _handle_story_card_intermediate(self, frame: np.ndarray) -> bool:
-        prompt = normalize_text(
-            self.vision.simplify(
-                self.vision.ocr_text(
-                    frame,
-                    "新卡带插入提示",
-                    roi=FIRST_CARD_INSERT_REGION,
-                )
-            )
-        )
-        if "未插好游戏卡" in prompt:
-            clicked = self.vision.click_ocr(
-                [r"插入", r"未插好游戏卡"],
-                roi=FIRST_CARD_INSERT_REGION,
-                after_sleep=0.8,
-                name="新卡带插入",
-            )
-            if clicked:
-                self._status("导航状态", "处理未插好游戏卡")
-                return True
-
-        skip = self.vision.match(frame, FIRST_CARD_SKIP_TEMPLATE)
-        if self.vision.passes(skip, FIRST_CARD_SKIP_TEMPLATE):
-            self.vision.click_client(skip.center, frame.shape, after_sleep=0.8)
-            self._status("导航状态", "跳过首次卡带对话")
-            return True
-
-        confirmation = normalize_text(
-            self.vision.simplify(
-                self.vision.ocr_text(
-                    frame,
-                    "首次卡带确认",
-                    roi=FIRST_CARD_CONFIRM_REGION,
-                )
-            )
-        )
-        if "确认" in confirmation and self.vision.click_ocr(
-            [r"确认"],
-            roi=FIRST_CARD_CONFIRM_REGION,
-            after_sleep=0.8,
-            name="首次卡带确认",
-        ):
-            self._status("导航状态", "确认首次卡带对话")
-            return True
-        return False
-
-    def _wait_for_story_sandbox(
-        self,
-        target_number: int,
-        timeout: float | None = None,
-        interval: float = 0.5,
-    ) -> NavigationResult:
-        end_at = monotonic() + max(
-            0.0,
-            self._loading_timeout() if timeout is None else float(timeout),
-        )
-        last_state = ScreenState.UNKNOWN
-        while monotonic() <= end_at:
-            frame = self.vision.capture()
-            last_state = self.classify(frame)
-            self._status("导航状态", last_state.value)
-            if last_state == ScreenState.SANDBOX:
-                return NavigationResult(True, last_state, f"Q_sp{target_number}")
-            if last_state != ScreenState.LOADING and self._handle_story_card_intermediate(frame):
-                continue
-            self.task.sleep(max(0.0, interval))
-        return NavigationResult(
-            False,
-            last_state,
-            f"剧情游戏卡{target_number}入场确认超时",
-        )
 
     def _wait_for_ocr_keywords(
         self,
@@ -822,9 +473,7 @@ class Navigator:
         name: str,
         relative_roi: tuple[float, float, float, float] | None = None,
     ) -> tuple[bool, str]:
-        required = tuple(
-            normalize_text(self.vision.simplify(value)) for value in keywords
-        )
+        required = tuple(normalize_text(self.vision.simplify(value)) for value in keywords)
         if relative_roi is None:
             text = self.vision.ocr_text(frame, name)
         else:
@@ -838,518 +487,18 @@ class Navigator:
         self._status(f"{name} OCR命中", f"{matched}/{len(required)}")
         return matched == len(required), text
 
-    def ensure_card_menu(self) -> NavigationResult:
-        state = self.classify()
-        if state == ScreenState.CARD_MENU:
-            return NavigationResult(True, state)
-        returned = self.return_home()
-        if not returned.success:
-            return returned
-        opened = self.task.open_cartridge_quick_switcher(
-            ensure_home=self._wait_for_cartridge_home,
-            click_quick_switch=lambda: self.vision.click_stable_template(
-                QUICK_SWITCH_TEMPLATE,
-                timeout=10.0,
-                after_sleep=1.0,
-            ),
-            confirm_quick_switch_page=self._wait_for_quick_switch_page,
-        )
-        if opened:
-            return NavigationResult(True, ScreenState.CARD_MENU)
-        return NavigationResult(False, self.classify(), "无法从主页打开快速切换卡带页面")
-
-    def select_card(self, card_id: str) -> NavigationResult:
-        card = CARD_BY_ID.get(card_id)
-        if card is None:
-            return NavigationResult(False, ScreenState.UNKNOWN, f"未知卡带：{card_id}")
-        returned = self.return_home()
-        if not returned.success:
-            return returned
-        menu = self._open_story_quick_switcher()
-        if not menu.success:
-            return menu
-
-        self._status("导航状态", f"识别剧情游戏卡{card.number}角标")
-        badge_match = self._wait_for_story_badge_with_scroll(card.number)
-        if badge_match is None:
-            return NavigationResult(
-                False,
-                self.classify(),
-                f"未唯一确认剧情游戏卡{card.number}角标",
-            )
-        badge_frame, badge = badge_match
-        self._status(
-            "目标卡带",
-            (
-                f"{card_id}: match={badge.best.result.score:.3f}, "
-                f"pixel={badge.best.result.pixel_score:.3f}, "
-                f"margin={badge.margin:.3f}"
-            ),
-        )
-        self._status(
-            f"剧情游戏卡{card.number}角标点击中心",
-            (
-                f"center=({badge.best.result.center[0]},"
-                f"{badge.best.result.center[1]}), "
-                f"match={badge.best.result.score:.3f}, "
-                f"pixel={badge.best.result.pixel_score:.3f}, "
-                f"margin={badge.margin:.3f}"
-            ),
-        )
-        self.vision.click_client(
-            badge.best.result.center,
-            badge_frame.shape,
-            after_sleep=1.0,
-        )
-        arrival = self._wait_for_story_sandbox(card.number)
-        if arrival.success:
-            return NavigationResult(True, arrival.state, card_id)
-        return arrival
-
-    def ensure_sandbox(self, card_id: str | None = None) -> NavigationResult:
-        if self.classify() == ScreenState.SANDBOX and card_id is None:
-            return NavigationResult(True, ScreenState.SANDBOX)
-        if card_id is not None:
-            return self.select_card(card_id)
-        menu = self.ensure_card_menu()
-        return menu
-
-    def reach_merchant_shop(self) -> NavigationResult:
-        state = self.classify()
-        if state == ScreenState.SHOP:
-            return NavigationResult(True, state)
-        if state not in {ScreenState.SANDBOX, ScreenState.MERCHANT_DIALOG}:
-            entered = self.select_card(MERCHANT_CARD_ID)
-            if not entered.success:
-                return entered
-
-        if self.classify() == ScreenState.MERCHANT_DIALOG:
-            return self._bargain_and_enter_shop()
-        if self.vision.click_template(MERCHANT_ICON_TEMPLATE, timeout=2.0, after_sleep=1.2):
-            if self.wait_state({ScreenState.MERCHANT_DIALOG}, 8) == ScreenState.MERCHANT_DIALOG:
-                return self._bargain_and_enter_shop()
-
-        if self.vision.wait_template(MAP_MERCHANT_TEMPLATE, 3) is None:
-            return NavigationResult(False, self.classify(), "小地图未找到商人")
-        if not self.vision.click_template(NAV_GUIDE_TEMPLATE, timeout=3, after_sleep=0.8):
-            return NavigationResult(False, self.classify(), "未找到小地图导航按钮")
-        if not self.vision.click_ocr([r"商店"], roi=(220, 40, 360, 340), name="商店导航"):
-            return NavigationResult(False, self.classify(), "导航菜单未识别到商店")
-        self.task.sleep(0.8)
-        self.vision.click_ocr([r"确认"], roi=(620, 350, 230, 240), name="商店导航确认")
-        self._wait_auto_navigation(timeout=90)
-        if not self.vision.click_template(MERCHANT_ICON_TEMPLATE, timeout=10, after_sleep=1.2):
-            return NavigationResult(False, self.classify(), "到达商店后未找到商人交互图标")
-        if self.wait_state({ScreenState.MERCHANT_DIALOG}, 10) != ScreenState.MERCHANT_DIALOG:
-            return NavigationResult(False, self.classify(), "未进入商人对话")
-        return self._bargain_and_enter_shop()
-
-    def _bargain_and_enter_shop(self) -> NavigationResult:
-        bargained = self.vision.click_ocr([r"砍价"], roi=(80, 520, 1000, 150), name="砍价")
-        if bargained:
-            self.task.sleep(0.5)
-            if not self.vision.click_ocr(
-                [r"砍价", r"确认"], roi=(500, 300, 380, 280), name="砍价确认"
-            ):
-                self.task.log_warning("跑商：砍价确认未出现，可能缺少砍价药，继续进入商店。")
-        else:
-            self.task.log_warning("跑商：未找到砍价选项，尝试直接进入商店。")
-        self.task.sleep(0.7)
-        if not self.vision.click_ocr(
-            [r"商店", r"进入商店"], roi=(60, 400, 1040, 260), name="商店入口"
-        ):
-            # Only used after the merchant dialogue template was positively identified.
-            self.vision.click_reference(130, 447, after_sleep=0.5)
-        state = self.wait_state({ScreenState.SHOP}, 12)
-        if state == ScreenState.SHOP:
-            return NavigationResult(True, state)
-        # Dialogue animation occasionally needs one harmless central click.
-        self.vision.click_reference(640, 620, after_sleep=0.6)
-        state = self.wait_state({ScreenState.SHOP}, 6)
-        return NavigationResult(state == ScreenState.SHOP, state, "商店进入超时")
-
-    def _wait_auto_navigation(self, timeout: float) -> None:
-        end_at = monotonic() + timeout
-        seen = False
-        while monotonic() <= end_at:
-            frame = self.vision.capture()
-            active = self.vision.match(frame, AUTO_NAV_TEMPLATE).score >= self.vision.threshold_for(
-                AUTO_NAV_TEMPLATE
-            )
-            seen = seen or active
-            if seen and not active:
-                return
-            if not seen and self.vision.match(
-                frame, MERCHANT_ICON_TEMPLATE
-            ).score >= self.vision.threshold_for(MERCHANT_ICON_TEMPLATE):
-                return
-            self.task.sleep(0.5)
-
-    def ensure_area_map(self) -> NavigationResult:
-        state = self.classify()
-        if state == ScreenState.AREA_MAP:
-            return NavigationResult(True, state)
-        if state != ScreenState.SANDBOX:
-            return NavigationResult(False, state, "不在箱庭，无法打开传送地图")
-        if self.vision.click_template(HAND_TEMPLATE, timeout=2.0, after_sleep=0.8):
-            if self.wait_state({ScreenState.AREA_MAP}, 8) == ScreenState.AREA_MAP:
-                return NavigationResult(True, ScreenState.AREA_MAP)
-
-        self.vision.click_reference(148, 119, after_sleep=0.8)
-        if self.vision.click_template(NAV_TELEPORT_TEMPLATE, timeout=5, after_sleep=0.7):
-            self.vision.click_ocr([r"确认", r"生成"], name="传送阵导航")
-            self._wait_auto_navigation(90)
-            if self.vision.click_template(HAND_TEMPLATE, timeout=10, after_sleep=0.8):
-                if self.wait_state({ScreenState.AREA_MAP}, 8) == ScreenState.AREA_MAP:
-                    return NavigationResult(True, ScreenState.AREA_MAP)
-        return NavigationResult(False, self.classify(), "无法打开传送地图")
-
-    def _optional_match(self, frame: np.ndarray, spec: TemplateSpec) -> MatchResult | None:
-        result = self.vision.match(frame, spec)
-        return result if self.vision.passes(result, spec) else None
-
-    def _area_map_teleports(self, frame: np.ndarray) -> tuple[MatchResult, ...]:
-        height, width = frame.shape[:2]
-        cluster_radius = max(
-            6,
-            round(
-                AREA_MAP_TELEPORT_CLUSTER_RADIUS
-                * min(width / 1920, height / 1080)
-            ),
-        )
-        candidates: list[MatchResult] = []
-        for spec in TELEPORT_MAP_TEMPLATES:
-            candidates.extend(
-                result
-                for result in self.vision.match_all(
-                    frame,
-                    spec,
-                    minimum_score=self.vision.threshold_for(spec),
-                    peak_radius=cluster_radius,
-                )
-                if self.vision.passes(result, spec)
-            )
-        independent: list[MatchResult] = []
-        for candidate in sorted(candidates, key=lambda value: value.score, reverse=True):
-            if any(
-                (candidate.center[0] - kept.center[0]) ** 2
-                + (candidate.center[1] - kept.center[1]) ** 2
-                <= cluster_radius**2
-                for kept in independent
-            ):
-                continue
-            independent.append(candidate)
-        return tuple(sorted(independent, key=lambda value: value.center))
-
     @staticmethod
-    def _target_keys_in_text(card: CardSpec, normalized_text: str) -> tuple[str, ...]:
-        matches: list[tuple[int, str]] = []
-        for target in card.targets:
-            title_lengths = [
-                len(normalized_title)
-                for title in target.titles
-                if (normalized_title := normalize_text(title))
-                and normalized_title in normalized_text
-            ]
-            if title_lengths:
-                matches.append((max(title_lengths), target.key))
-        if not matches:
-            return ()
-        longest = max(length for length, _key in matches)
-        return tuple(sorted({key for length, key in matches if length == longest}))
-
-    def _area_map_context(self, frame: np.ndarray, card: CardSpec) -> AreaMapContext:
-        raw_text = self.vision.simplify(self.vision.ocr_text(frame, "区域地图"))
-        normalized_text = normalize_text(raw_text)
-        target_keys = self._target_keys_in_text(card, normalized_text)
-        context = AreaMapContext(
-            frame_shape=frame.shape,
-            raw_text=raw_text,
-            normalized_text=normalized_text,
-            is_area_map=normalize_text("移动魔法阵") in normalized_text,
-            candidate_target_keys=target_keys,
-            resolved_target_key=target_keys[0] if len(target_keys) == 1 else None,
-            left_arrow=self._optional_match(frame, MAP_LEFT_TEMPLATE),
-            right_arrow=self._optional_match(frame, MAP_RIGHT_TEMPLATE),
-            teleports=self._area_map_teleports(frame),
-            overlap_arrow=self._optional_match(frame, OVERLAP_ARROW_TEMPLATE),
-            back_button=self._optional_match(frame, AREA_MAP_BACK_TEMPLATE),
-        )
-        self._status(
-            "区域地图",
-            (
-                f"target={context.resolved_target_key or '-'}, "
-                f"candidates={','.join(context.candidate_target_keys) or '-'}, "
-                f"left={context.left_arrow is not None}, "
-                f"right={context.right_arrow is not None}, "
-                f"teleports={len(context.teleports)}, "
-                f"ocr={context.raw_text or '-'}"
-            ),
-        )
-        return context
-
-    def _capture_area_map_context(self, card: CardSpec) -> AreaMapContext:
-        return self._area_map_context(self.vision.capture(), card)
-
-    def _wait_for_area_map_change(
-        self,
-        card: CardSpec,
-        previous: AreaMapContext,
-    ) -> AreaMapContext | None:
-        end_at = monotonic() + AREA_MAP_CHANGE_TIMEOUT
-        while monotonic() <= end_at:
-            current = self._capture_area_map_context(card)
-            if current.is_area_map and (
-                current.normalized_text != previous.normalized_text
-                or current.candidate_target_keys != previous.candidate_target_keys
-            ):
-                return current
-            self.task.sleep(AREA_MAP_CHANGE_INTERVAL)
-        return None
-
-    def _move_area_map(
-        self,
-        card: CardSpec,
-        context: AreaMapContext,
-        direction: str,
-    ) -> AreaMapContext | None:
-        arrow = context.right_arrow if direction == "right" else context.left_arrow
-        if arrow is None:
+    def _ocr_box_center(box) -> tuple[int, int] | None:
+        values = [getattr(box, key, None) for key in ("x", "y", "width", "height")]
+        raw_box = getattr(box, "box", None)
+        if any(value is None for value in values) and raw_box is not None and len(raw_box) >= 4:
+            values = list(raw_box[:4])
+        if any(value is None for value in values):
             return None
-        self.vision.click_client(
-            arrow.center,
-            context.frame_shape,
-            after_sleep=AREA_MAP_CLICK_SETTLE_SECONDS,
-        )
-        return self._wait_for_area_map_change(card, context)
-
-    def _scan_area_map_direction(
-        self,
-        card: CardSpec,
-        target: CollectionMapTarget,
-        context: AreaMapContext,
-        direction: str,
-    ) -> tuple[AreaMapContext, bool, bool]:
-        current = context
-        moved = False
-        visited = {current.normalized_text}
-        for _step in range(AREA_MAP_SCAN_LIMIT):
-            if current.resolved_target_key == target.key:
-                return current, moved, False
-            arrow = current.right_arrow if direction == "right" else current.left_arrow
-            if arrow is None:
-                return current, moved, False
-            changed = self._move_area_map(card, current, direction)
-            if changed is None or changed.normalized_text in visited:
-                return current, moved, True
-            current = changed
-            moved = True
-            visited.add(current.normalized_text)
-            if len(current.candidate_target_keys) > 1:
-                return current, moved, True
-        return current, moved, True
-
-    def _locate_collection_target(
-        self,
-        card: CardSpec,
-        target: CollectionMapTarget,
-        initial: AreaMapContext,
-    ) -> tuple[AreaMapContext | None, bool, str]:
-        if not initial.is_area_map:
-            return None, False, "未在同一帧确认移动魔法阵区域地图"
-        if len(initial.candidate_target_keys) > 1:
-            return None, False, "当前地图标题同时命中多个目标"
-        if initial.resolved_target_key == target.key:
-            return initial, False, ""
-
-        current, moved_right, failed = self._scan_area_map_direction(
-            card,
-            target,
-            initial,
-            "right",
-        )
-        if current.resolved_target_key == target.key:
-            return current, moved_right, ""
-        if failed:
-            return None, moved_right, "向右翻页后未确认页面变化或出现标题歧义"
-
-        current, moved_left, failed = self._scan_area_map_direction(
-            card,
-            target,
-            current,
-            "left",
-        )
-        if current.resolved_target_key == target.key:
-            return current, moved_right or moved_left, ""
-        if failed:
-            return None, moved_right or moved_left, "向左复位时未确认页面变化或出现标题歧义"
-
-        current, moved_again, failed = self._scan_area_map_direction(
-            card,
-            target,
-            current,
-            "right",
-        )
-        if current.resolved_target_key == target.key:
-            return current, moved_right or moved_left or moved_again, ""
-        if failed:
-            return None, True, "从最左页扫描时未确认页面变化或出现标题歧义"
-        return None, moved_right or moved_left or moved_again, (
-            f"到达区域图边界仍未找到{target.title}"
-        )
-
-    def _close_area_map(self, context: AreaMapContext) -> NavigationResult:
-        if context.back_button is None:
-            return NavigationResult(False, ScreenState.AREA_MAP, "未识别到区域地图返回按钮")
-        self.vision.click_client(
-            context.back_button.center,
-            context.frame_shape,
-            after_sleep=AREA_MAP_CLICK_SETTLE_SECONDS,
-        )
-        state = self.wait_state({ScreenState.SANDBOX}, 8)
-        return NavigationResult(
-            state == ScreenState.SANDBOX,
-            state,
-            "" if state == ScreenState.SANDBOX else "关闭区域地图后未确认箱庭",
-        )
-
-    def _confirm_collection_arrival(
-        self,
-        card: CardSpec,
-        target: CollectionMapTarget,
-    ) -> NavigationResult:
-        area = self.ensure_area_map()
-        if not area.success:
-            return NavigationResult(False, area.state, f"到达后无法复核区域地图：{area.message}")
-        context = self._capture_area_map_context(card)
-        if context.resolved_target_key != target.key:
-            actual = context.resolved_target_key or context.raw_text or "未知"
-            return NavigationResult(
-                False,
-                ScreenState.AREA_MAP,
-                f"到达后地图不符：目标={target.title}，实际={actual}",
-            )
-        closed = self._close_area_map(context)
-        if not closed.success:
-            return closed
-        return NavigationResult(
-            True,
-            ScreenState.SANDBOX,
-            f"{card.card_id}/{target.key}/{target.title}",
-        )
-
-    def _click_collection_teleport(
-        self,
-        card: CardSpec,
-        target: CollectionMapTarget,
-        context: AreaMapContext,
-    ) -> NavigationResult:
-        if not context.teleports and context.overlap_arrow is not None:
-            self.vision.click_client(
-                context.overlap_arrow.center,
-                context.frame_shape,
-                after_sleep=AREA_MAP_CLICK_SETTLE_SECONDS,
-            )
-            expanded = self._capture_area_map_context(card)
-            if expanded.resolved_target_key != target.key:
-                return NavigationResult(
-                    False,
-                    ScreenState.AREA_MAP,
-                    "展开传送阵后目标地图标题发生变化",
-                )
-            context = expanded
-        if len(context.teleports) != 1:
-            return NavigationResult(
-                False,
-                ScreenState.AREA_MAP,
-                f"{target.title}需要唯一传送阵，实际识别到{len(context.teleports)}个",
-            )
-
-        self.vision.click_client(
-            context.teleports[0].center,
-            context.frame_shape,
-            after_sleep=AREA_MAP_CLICK_SETTLE_SECONDS,
-        )
-        self.vision.click_ocr([r"确认", r"生成"], name="传送确认")
-        state = self.wait_state({ScreenState.SANDBOX, ScreenState.LOADING}, 8)
-        if state == ScreenState.LOADING:
-            state = self.wait_state({ScreenState.SANDBOX}, self._loading_timeout())
-        if state != ScreenState.SANDBOX:
-            return NavigationResult(False, state, f"传送到{target.title}超时")
-        return self._confirm_collection_arrival(card, target)
-
-    def enter_collection_map(
-        self,
-        card_id: str,
-        target: CollectionMapTarget,
-    ) -> NavigationResult:
-        card = CARD_BY_ID.get(card_id)
-        if card is None or target.key not in {value.key for value in card.targets}:
-            return NavigationResult(
-                False,
-                ScreenState.UNKNOWN,
-                f"未知采集目标：{card_id}/{target.key}",
-            )
-        area = self.ensure_area_map()
-        if not area.success:
-            return area
-        initial = self._capture_area_map_context(card)
-        located, moved, reason = self._locate_collection_target(card, target, initial)
-        if located is None:
-            return NavigationResult(False, ScreenState.AREA_MAP, reason)
-        if not moved:
-            closed = self._close_area_map(located)
-            if not closed.success:
-                return closed
-            return NavigationResult(
-                True,
-                ScreenState.SANDBOX,
-                f"{card.card_id}/{target.key}/{target.title}",
-            )
-        return self._click_collection_teleport(card, target, located)
-
-    def return_home(self) -> NavigationResult:
-        state = self.classify()
-        if state == ScreenState.HOME:
-            return NavigationResult(True, state)
-        if state == ScreenState.SHOP:
-            return self._return_home_from_discount_shop()
-
-        for _ in range(6):
-            state = self.classify()
-            if state == ScreenState.HOME:
-                return NavigationResult(True, state)
-            if state == ScreenState.LOADING:
-                self.wait_state(
-                    {ScreenState.HOME, ScreenState.SANDBOX, ScreenState.CARD_MENU},
-                    self._loading_timeout(),
-                )
-                continue
-            self.vision.click_reference(82, 36, after_sleep=0.8)
-        state = self.classify()
-        return NavigationResult(state == ScreenState.HOME, state, "返回章节主页失败")
-
-    def _return_home_from_discount_shop(self) -> NavigationResult:
-        self.vision.click_reference(82, 36, after_sleep=0.0)
-        if not self._wait_for_ocr_keywords(
-            DISCOUNT_SHOP_CLOSE_KEYWORDS,
-            DISCOUNT_SHOP_CLOSE_TIMEOUT,
-            "折扣商店关闭确认",
-            interval=0.25,
-            relative_roi=DISCOUNT_SHOP_CLOSE_DIALOG_REGION,
-        ):
-            return NavigationResult(
-                False,
-                self.classify(),
-                "点击返回后未识别到折扣商店关闭确认",
-            )
-
-        self.task.operate_click(*DISCOUNT_SHOP_CLOSE_POINT, after_sleep=0.8)
-        self.vision.click_reference(82, 36, after_sleep=0.8)
-        self.task.operate_click(*CHAPTER_HOME_POINT, after_sleep=0.0)
-        if self._wait_for_cartridge_home(timeout=RETURN_HOME_TIMEOUT):
-            return NavigationResult(True, ScreenState.HOME, "已关闭折扣商店并返回主页")
-        return NavigationResult(False, self.classify(), "关闭折扣商店后未在10秒内返回主页")
+        x, y, width, height = (float(value) for value in values)
+        if width <= 0 or height <= 0:
+            return None
+        return round(x + width / 2), round(y + height / 2)
 
     def _status(self, key: str, value) -> None:
         try:

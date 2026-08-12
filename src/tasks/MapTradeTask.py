@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 
 from ok import Config
@@ -22,6 +21,13 @@ TRADE_VISION_THRESHOLD_KEY = "跑商识图阈值"
 TRADE_OCR_THRESHOLD_KEY = "跑商 OCR 阈值"
 MAP_VISION_THRESHOLD_KEY = "跑图识图阈值"
 MAP_OCR_THRESHOLD_KEY = "跑图 OCR 阈值"
+
+# Temporary kill switch: keep the cooking implementation and its persisted
+# data intact, but hide the cooking UI and phase until the feature is restored.
+TEMPORARY_COOKING_FEATURE_ENABLED = False
+COOKING_CONFIG_KEYS = frozenset(
+    ("制作料理", "料理制作周期", "料理保险", "5星料理")
+)
 
 
 def _empty_manual_calendar() -> str:
@@ -130,10 +136,18 @@ class MapAutomationTaskBase(BaseBD2Task):
                     (completed if success else failed).append(name)
                     if not success:
                         self._save_diagnostic(f"{self.diagnostic_prefix}_{name}_failed")
+                        self.log_warning(
+                            f"{self.task_log_name}：{name}失败，停止后续阶段。"
+                        )
+                        break
                 except Exception as exc:
                     failed.append(name)
                     self.log_error(f"{self.task_log_name}子流程失败：{name}。", exc)
                     self._save_diagnostic(f"{self.diagnostic_prefix}_{name}_error")
+                    self.log_warning(
+                        f"{self.task_log_name}：{name}异常，停止后续阶段。"
+                    )
+                    break
         finally:
             self.info_set("当前阶段", "返回章节主页")
             returned = navigator.return_home()
@@ -157,90 +171,8 @@ class MapAutomationTaskBase(BaseBD2Task):
         except Exception as exc:
             self.log_warning(f"诊断截图保存失败：{exc}")
 
-    def _drag_client(
-        self,
-        start: tuple[int, int],
-        end: tuple[int, int],
-        duration: float = 0.7,
-        after_sleep: float = 0.0,
-    ) -> None:
-        """Drag with foreground mouse input only; these tasks never send keys."""
-
-        def action():
-            import win32api
-            import win32con
-
-            interaction = getattr(self.executor, "interaction", None)
-            if interaction is not None and hasattr(interaction, "force_activate"):
-                interaction.force_activate()
-            elif interaction is not None and hasattr(interaction, "try_activate"):
-                interaction.try_activate()
-            capture = getattr(interaction, "capture", None)
-
-            def to_screen(point: tuple[int, int]) -> tuple[int, int]:
-                if capture is not None and hasattr(capture, "get_abs_cords"):
-                    return capture.get_abs_cords(point[0], point[1])
-                return point
-
-            start_abs = to_screen(start)
-            end_abs = to_screen(end)
-            steps = max(6, round(duration / 0.03))
-            win32api.SetCursorPos(start_abs)
-            time.sleep(0.03)
-            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-            try:
-                for index in range(1, steps + 1):
-                    ratio = index / steps
-                    x = round(start_abs[0] + (end_abs[0] - start_abs[0]) * ratio)
-                    y = round(start_abs[1] + (end_abs[1] - start_abs[1]) * ratio)
-                    win32api.SetCursorPos((x, y))
-                    time.sleep(duration / steps)
-            finally:
-                win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
-
-        self.operate(action, block=True, restore_cursor=True)
-        self.sleep(after_sleep)
-
-    def _scroll_client(
-        self,
-        relative_point: tuple[float, float],
-        scroll_amount: int,
-        count: int = 1,
-        interval: float = 0.1,
-        after_sleep: float = 0.0,
-    ) -> None:
-        """Send foreground mouse-wheel events at a relative client point."""
-
-        frame = self.capture_frame()
-        height, width = frame.shape[:2]
-        x = round(max(0.0, min(1.0, relative_point[0])) * width)
-        y = round(max(0.0, min(1.0, relative_point[1])) * height)
-        wheel_count = max(1, int(count))
-        wheel_interval = max(0.0, float(interval))
-        interaction = getattr(self.executor, "interaction", None)
-        if interaction is None or not hasattr(interaction, "scroll"):
-            raise RuntimeError("当前交互对象不支持鼠标滚轮")
-
-        def action():
-            import win32api
-
-            if hasattr(interaction, "force_activate"):
-                interaction.force_activate()
-            elif hasattr(interaction, "try_activate"):
-                interaction.try_activate()
-            capture = getattr(interaction, "capture", None)
-            if capture is not None and hasattr(capture, "get_abs_cords"):
-                win32api.SetCursorPos(capture.get_abs_cords(x, y))
-            for index in range(wheel_count):
-                interaction.scroll(x, y, int(scroll_amount))
-                if index + 1 < wheel_count:
-                    time.sleep(wheel_interval)
-
-        self.operate(action, block=True, restore_cursor=True)
-        self.sleep(after_sleep)
-
 class MapTradeTask(MapAutomationTaskBase):
-    """Daily cooking and merchant task, separated from weekly map collection."""
+    """Daily merchant task, separated from weekly map collection."""
 
     vision_threshold_key = TRADE_VISION_THRESHOLD_KEY
     ocr_threshold_key = TRADE_OCR_THRESHOLD_KEY
@@ -273,7 +205,7 @@ class MapTradeTask(MapAutomationTaskBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = "每日跑商"
-        self.description = "每日按配置执行买、卖与制作料理。"
+        self.description = "每日按配置执行买卖。"
         self.icon = FluentIcon.SHOPPING_CART
         self.group_name = "日常/周常"
         self.group_icon = FluentIcon.CALENDAR
@@ -377,6 +309,11 @@ class MapTradeTask(MapAutomationTaskBase):
                 "加载页面等待秒数": {"min": 10.0, "max": 120.0, "step": 1.0},
             }
         )
+        if not TEMPORARY_COOKING_FEATURE_ENABLED:
+            for key in COOKING_CONFIG_KEYS:
+                self.default_config.pop(key, None)
+                self.config_description.pop(key, None)
+                self.config_type.pop(key, None)
 
     def load_config(self):
         legacy = _read_config(_config_path(self.__class__.__name__))
@@ -384,7 +321,8 @@ class MapTradeTask(MapAutomationTaskBase):
         _migrate_collection_config(legacy)
         super().load_config()
         for key, value in section_values.items():
-            self.config[key] = value
+            if TEMPORARY_COOKING_FEATURE_ENABLED or key not in COOKING_CONFIG_KEYS:
+                self.config[key] = value
         key_map = {
             LEGACY_VISION_THRESHOLD_KEY: TRADE_VISION_THRESHOLD_KEY,
             LEGACY_OCR_THRESHOLD_KEY: TRADE_OCR_THRESHOLD_KEY,
@@ -392,6 +330,10 @@ class MapTradeTask(MapAutomationTaskBase):
         for old_key, new_key in key_map.items():
             if new_key not in legacy and old_key in legacy:
                 self.config[new_key] = legacy[old_key]
+        if not TEMPORARY_COOKING_FEATURE_ENABLED:
+            for key in COOKING_CONFIG_KEYS:
+                if key in self.config:
+                    self.config.pop(key, None)
 
     def validate_config(self, key, value):
         current_config = self.config if self.config is not None else self.default_config
@@ -427,11 +369,10 @@ class MapTradeTask(MapAutomationTaskBase):
         progress = ProgressStore()
         progress.load()
         trader = Trader(self, vision, navigator, progress)
-        return self._run_phases(
-            navigator,
-            (
-                ("买", "买", trader.run_buy),
-                ("卖", "卖", trader.run_sell),
-                ("制作料理", "制作料理", trader.run_cooking),
-            ),
+        phases = (
+            ("买", "买", trader.run_buy),
+            ("卖", "卖", trader.run_sell),
         )
+        if TEMPORARY_COOKING_FEATURE_ENABLED:
+            phases += (("制作料理", "制作料理", trader.run_cooking),)
+        return self._run_phases(navigator, phases)
