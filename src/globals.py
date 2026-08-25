@@ -27,15 +27,18 @@ class Globals(QObject):
 
         from src.game_path import seed_device_manager_launch_path
         from src.ui.feedback_report import install_feedback_report
-        from src.ui.home_dashboard import install_home_dashboard
+        from src.ui.fluent_motion import install_fluent_page_transition, install_start_list_motion
         from src.ui.live_screenshot import install_live_screenshot
+        from src.ui.nav_sections import install_nav_sections
 
         launch_path = seed_device_manager_launch_path(og.device_manager)
         if launch_path:
             logger.info(f"seed BD2 Starter path {launch_path}")
         install_live_screenshot(main_window.start_tab)
         install_feedback_report(main_window.start_tab)
-        install_home_dashboard(main_window)
+        install_nav_sections(main_window)
+        install_fluent_page_transition(main_window)
+        install_start_list_motion(main_window.start_tab)
 
     def get_thread_pool_executor(self, max_workers: int = 6) -> ThreadPoolExecutor:
         if (
