@@ -4,6 +4,7 @@ from src.tasks.BaseBD2Task import BaseBD2Task
 from src.tasks.map_trade.models import TemplateSpec
 from src.tasks.quick_hunt import QuickHuntConfigMixin
 from src.tasks.task_vision_mixin import TaskVisionMixin
+from src.utils.home_confirmation import HOME_DIMMED_P95_THRESHOLD_DEFAULT
 
 GUILD_TEMPLATE = TemplateSpec(
     name="guild",
@@ -56,7 +57,18 @@ MY_HOME_TEMPLATE = TemplateSpec(
     default_threshold=0.76,
 )
 
-GUILD_SUCCESS_KEYWORDS = ["签到成功", "奖励已发放至邮箱"]
+# 繁体客户端实际文案（BUG-20260829-06 实测转录）：簽到成功/獎勵已發送至信箱。
+# keyword_match_count 已统一繁转简，关键字一律写简体。
+GUILD_SUCCESS_KEYWORDS = ["签到成功", "奖励已发送至信箱"]
+
+# 经营管理弹窗实际文案：餐廳營業額現狀/魚籠捕獲現狀/助手工作現況/取消/一鍵獲得。
+BUSINESS_COLLECT_KEYWORDS = [
+    "餐厅营业额现状",
+    "鱼笼捕获现状",
+    "助手工作现况",
+    "取消",
+    "一键获得",
+]
 
 
 class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
@@ -108,7 +120,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
         "一键收菜返回主页 抽抽乐 OCR",
         "一键收菜返回主页结果",
         "加载页面阈值",
-        "主页亮度比例阈值",
+        "主页压暗阈值",
         "日常 OCR 阈值",
         "loading 出现等待秒数",
         "loading 消失等待秒数",
@@ -157,7 +169,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
                 '公会签到成功阈值': 0.76,
                 '小屋页面阈值': 0.76,
                 '加载页面阈值': 0.72,
-                '主页亮度比例阈值': 0.75,
+                '主页压暗阈值': HOME_DIMMED_P95_THRESHOLD_DEFAULT,
                 '日常 OCR 阈值': 0.2,
                 'loading 出现等待秒数': 6.0,
                 'loading 消失等待秒数': 35.0,
@@ -321,13 +333,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
 
         self._click_reference(165, 260, after_sleep=1.0)
         found, text = self._wait_for_ocr_keywords(
-            [
-                "餐厅营业额现状",
-                "鱼笼收获情况",
-                "助手工作情况",
-                "取消",
-                "一键获得",
-            ],
+            BUSINESS_COLLECT_KEYWORDS,
             timeout=float(self.config.get("一键收菜菜单等待秒数", 8.0)),
             minimum_matches=2,
             name="business_collect",

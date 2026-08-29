@@ -9,6 +9,7 @@ from ok.util.GlobalConfig import create_basic_options
 
 from src import GAME_EXE, HWND_CLASS
 from src.compat.main_window_geometry import install_main_window_geometry_debounce
+from src.compat.starter_guard import enable_starter_launch_guard
 from src.compat.starter_launch import enable_starter_launch_uri
 from src.compat.windows_graphics import WGC_MIN_CAPTURE_SIZE, enable_windows_10_wgc
 from src.game_path import calculate_pc_exe_path
@@ -19,7 +20,7 @@ from src.ui.responsive_task_config import install_responsive_task_config_ui
 
 # This marker is replaced with the Git tag when PyAppify creates the update
 # repository.  Source checkouts always read the project version from pyproject.
-version = "v1.1.4"
+version = "v1.1.5"
 
 
 def runtime_version(project_file: Path | None = None) -> str:
@@ -34,6 +35,7 @@ def runtime_version(project_file: Path | None = None) -> str:
 
 enable_windows_10_wgc()
 enable_starter_launch_uri()
+enable_starter_launch_guard()
 install_main_window_geometry_debounce()
 install_responsive_task_config_ui()
 install_quest_ui()
@@ -77,7 +79,7 @@ config = {
             "params": {
                 "use_openvino": True,
                 # ok-script 1.0.190 forwards only use_openvino/use_npu here;
-                # onnxocr 0.0.20 therefore keeps its safe AsyncInferQueue default (1).
+                # onnxocr 0.0.22 therefore keeps its safe AsyncInferQueue default (1).
             },
         },
     },
