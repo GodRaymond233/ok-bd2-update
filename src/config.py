@@ -15,12 +15,13 @@ from src.compat.windows_graphics import WGC_MIN_CAPTURE_SIZE, enable_windows_10_
 from src.game_path import calculate_pc_exe_path
 from src.interaction.BD2Interaction import BD2Interaction
 from src.process_feature import process_feature
+from src.ui.quest_theme import apply_app_font
 from src.ui.quest_ui import install_quest_ui
 from src.ui.responsive_task_config import install_responsive_task_config_ui
 
 # This marker is replaced with the Git tag when PyAppify creates the update
 # repository.  Source checkouts always read the project version from pyproject.
-version = "v1.1.7"
+version = "v1.1.8"
 
 
 def runtime_version(project_file: Path | None = None) -> str:
@@ -33,6 +34,7 @@ def runtime_version(project_file: Path | None = None) -> str:
         raise RuntimeError("Missing pyproject.toml and PyAppify release tag.")
     return version
 
+apply_app_font()
 enable_windows_10_wgc()
 enable_starter_launch_uri()
 enable_starter_launch_guard()
