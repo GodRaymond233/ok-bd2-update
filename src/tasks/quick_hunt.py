@@ -156,7 +156,7 @@ class QuickHuntConfigMixin:
     }
 
     quick_hunt_config_description = {
-        '执行快速狩猎': "按  路径消耗免费米饭和火把。",
+        '执行快速狩猎': "消耗免费米饭和火把。",
         '快速狩猎冒险航线': "消耗米饭扫荡金币或经验冒险航线。",
         '快速狩猎狩猎场': "不切换关卡，直接消耗米饭扫荡游戏当前默认狩猎场。",
         '快速狩猎圣石洞穴': "读取五种圣石数量并扫荡当前最少的属性洞穴。",
@@ -430,7 +430,7 @@ class QuickHuntFeatureMixin:
         return True
 
     def run_quick_hunt(self) -> bool:
-        """Run the  quick-hunt scheduler using PC-safe mouse input."""
+        """Run the quick-hunt scheduler using PC-safe mouse input."""
 
         opened = self._quick_hunt_open_menu()
         if opened != "opened":
@@ -541,7 +541,7 @@ class QuickHuntFeatureMixin:
                 self.operate_click(*QUICK_HUNT_ENTRY_POINT, after_sleep=1.0)
                 self._status_set("快速狩猎入口", "OCR 未命中，已点击固定入口中心")
 
-            # User requirement:  coordinates must not be inferred or converted.
+            # User requirement: external coordinates must not be inferred or converted.
             # The menu is confirmed by full-frame OCR unless an ok-bd2 ROI is supplied.
             text, _box = self._quick_hunt_wait_ocr(
                 [r"狩猎场"],
@@ -671,6 +671,16 @@ class QuickHuntFeatureMixin:
                 name="圣石洞穴入口",
             )
             if not clicked:
+                # RPT-20260902-225925：实机条带 OCR 连续 20 秒全空，但 6 秒前
+                # 整屏 OCR 能读到"圣石洞穴"，该客户端入口可能偏移到条带外；
+                # 条带未命中先整屏 OCR 兜底（"圣石洞"三字前缀在狩猎菜单内唯一）。
+                clicked = self._quick_hunt_click_ocr(
+                    [QUICK_HUNT_CRYSTAL_ENTRY_PATTERN],
+                    None,
+                    2.0,
+                    name="圣石洞穴入口整屏",
+                )
+            if not clicked:
                 seen = self._quick_hunt_ocr_text(
                     self.capture_frame(),
                     QUICK_HUNT_CRYSTAL_CLICK_ROI,
@@ -692,6 +702,7 @@ class QuickHuntFeatureMixin:
                 + ("，重试。" if attempt < max(1, attempts) else "。")
             )
         self.log_info("快速狩猎：点击圣石洞穴后未确认属性洞穴列表。")
+        self._save_flow_diagnostic("quick_hunt_crystal_entry_failed")
         return False
 
     def _quick_hunt_select_adventure_route(self) -> str | None:

@@ -30,7 +30,10 @@ QUICK_SWITCH_TEMPLATE = TemplateSpec(
     min_pixel_score=0.85,
     candidate_center_roi=(650 / 1920, 950 / 1080, 1050 / 1920, 1045 / 1080),
     minimum_safe_threshold=0.88,
-    min_zncc_score=0.85,
+    # 与 SquareGoddessTask.QUICK_SWITCH_TEMPLATE 同一按钮：梦幻广场内暗色
+    # 圆底样式在 1600x901 实机帧 zncc 最高 0.838（RPT-20260902-225925），
+    # 0.85 门禁确定性误拒；同帧误检 zncc 最高 0.43，0.78 仍有足够余量。
+    min_zncc_score=0.78,
 )
 Q_SP6_SHOP_PRIORITY_TIMEOUT = 3.0
 # 折扣商店页专有页签 OCR 信号：在商店页整帧 OCR 中已验证稳定命中
@@ -383,6 +386,23 @@ MERCHANT_CLICK_LOCATION_TEMPLATE = TemplateSpec(
 )
 MERCHANT_CLICK_LOCATION_FAILURE_MESSAGE = "未识别到MerchantClickLocation.png"
 MERCHANT_DIALOG_CONFIRM_TIMEOUT = 3.0
+# 箱庭内角色位置保持在上次离开处，传送进剧情卡6后商人地标不一定在视野内；
+# 此时经小地图导航菜单的"商店"目的地让游戏自动寻路到商人，再重新识别地标。
+MERCHANT_NAV_GUIDE_TEMPLATE = TemplateSpec(
+    "小地图导航", "image/Nvi_SandGuideButt.png", 0.72, roi=(180, 45, 210, 110)
+)
+MERCHANT_AUTO_NAV_TEMPLATE = TemplateSpec(
+    "自动移动", "image/AutoNvi_ico.png", 0.72, roi=(570, 580, 140, 120)
+)
+MERCHANT_NAV_MENU_OCR_ROI = (220, 40, 360, 340)
+MERCHANT_NAV_CONFIRM_OCR_ROI = (620, 350, 230, 240)
+MERCHANT_NAV_GUIDE_TIMEOUT = 3.0
+MERCHANT_NAV_MENU_OCR_TIMEOUT = 6.0
+MERCHANT_NAV_MENU_OCR_INTERVAL = 0.5
+MERCHANT_AUTO_NAV_START_TIMEOUT = 8.0
+MERCHANT_AUTO_NAV_TIMEOUT = 90.0
+MERCHANT_AUTO_NAV_POLL_INTERVAL = 0.5
+MERCHANT_NAV_LANDMARK_TIMEOUT = 10.0
 SANDBOX_NAVIGATION_PIN_TEMPLATE = TemplateSpec(
     "箱庭小地图图钉",
     "image/pin.png",
