@@ -7,7 +7,9 @@ import numpy as np
 
 from src.tasks.map_trade.data import (
     SHOP_CARTRIDGE_BRIGHTNESS,
+    SHOP_CARTRIDGE_PAGE_INDEX,
     SHOP_CARTRIDGE_PAGES,
+    SHOP_CARTRIDGE_ROW_INDEX,
     SHOP_FAVORITE_POINTS,
     SHOP_PURCHASE_REFERENCES,
     shop_purchase_reference,
@@ -65,6 +67,7 @@ from src.tasks.map_trade.trader_constants import (  # noqa: F401
     SHOP_CARTRIDGE_SCROLL_REGION,
     SHOP_DOWN_SCROLL_INTERVAL,
     SHOP_FIRST_PAGE_MAX_UP_SCROLLS,
+    SHOP_LIST_TOP_EXTRA_UP_SCROLLS,
     SHOP_MODE_INTERVAL,
     SHOP_MODE_TIMEOUT,
     SHOP_MODE_TITLE_REGION,
@@ -146,6 +149,102 @@ class ShopCartridgeNavigationMixin:
             )
         self.task.log_warning("买：向上逐格滚动后仍未识别到剧情游戏卡1。")
         return False
+
+    def _shop_list_top_row_index(self, frame: np.ndarray) -> int | None:
+        """返回当前可见区域最上面一张卡带的全局行号（OCR 估算，一格滚轮约一行）。"""
+        for row in self._shop_cartridge_ocr_rows(frame):
+            position = SHOP_CARTRIDGE_ROW_INDEX.get(row.shop_id)
+            if position is not None:
+                return position
+        return None
+
+    def _ensure_sell_list_at_top(self) -> bool:
+        """出售会话起点定位到第 1 页：先认 S1，不在则 OCR 估算位置快速上滚。"""
+        for _attempt in range(3):
+            frame = self.vision.capture()
+            if self._cartridge_visible("S1", frame):
+                self._status("商品卡带页", "第1页")
+                self._sell_cartridge_page = 0
+                return True
+            top_row_index = self._shop_list_top_row_index(frame)
+            if top_row_index is None:
+                break
+            self._scroll_shop_cartridges(
+                scroll_amount=1,
+                count=min(
+                    top_row_index + SHOP_LIST_TOP_EXTRA_UP_SCROLLS,
+                    SHOP_FIRST_PAGE_MAX_UP_SCROLLS,
+                ),
+                interval=0.0,
+                after_sleep=SHOP_UP_SCROLL_RECOGNITION_INTERVAL,
+            )
+        # OCR 估算失败时的兜底：逐格上滚认 S1。
+        if self._reset_shop_to_first_page():
+            self._sell_cartridge_page = 0
+            return True
+        return False
+
+    def _select_shop_cartridge_downward(self, shop_id: str) -> bool:
+        """出售会话内单调向下选卡带：按目标页与当前页的差值一口气下滚。"""
+        if getattr(self, "_sell_cartridge_page", None) is None:
+            if not self._ensure_sell_list_at_top():
+                return False
+        target = SHOP_CARTRIDGE_PAGE_INDEX[shop_id]
+        if target < self._sell_cartridge_page:
+            # 目标在当前位置上方（如价表顺序异常）：重新定位到顶部再向下。
+            if not self._ensure_sell_list_at_top():
+                # 定位失败时列表位置不可信，作废会话页号避免后续条目
+                # 从错误基准起算滚动距离。
+                self._sell_cartridge_page = None
+                return False
+        current = self._sell_cartridge_page
+        if target > current:
+            steps = sum(
+                page.scroll_down_from_previous
+                for page in SHOP_CARTRIDGE_PAGES[current + 1 : target + 1]
+            )
+            self._scroll_shop_cartridges(
+                scroll_amount=-1,
+                count=steps,
+                interval=0.0,
+                after_sleep=0.5,
+            )
+        page = SHOP_CARTRIDGE_PAGES[target]
+        if not self._wait_for_shop_page(page.confirmation_shop_ids):
+            # 落点偏差时按 OCR 实测顶部行号修正一次。
+            frame = self.vision.capture()
+            top_row_index = self._shop_list_top_row_index(frame)
+            if top_row_index is None:
+                self._sell_cartridge_page = None
+                labels = "、".join(
+                    SHOP_PURCHASE_REFERENCES[value].label
+                    for value in page.confirmation_shop_ids
+                )
+                self.task.log_warning(
+                    f"卖：向下滚动后未确认第{page.page_number}页边界卡带：{labels}。"
+                )
+                return False
+            delta = SHOP_CARTRIDGE_ROW_INDEX[page.shop_ids[0]] - top_row_index
+            if delta != 0:
+                self._scroll_shop_cartridges(
+                    scroll_amount=-1 if delta > 0 else 1,
+                    count=abs(delta),
+                    interval=0.0,
+                    after_sleep=SHOP_UP_SCROLL_RECOGNITION_INTERVAL,
+                )
+            if not self._wait_for_shop_page(page.confirmation_shop_ids):
+                # 修正滚动后落点仍未确认，页号已失真，作废以强制下次重新定位。
+                self._sell_cartridge_page = None
+                labels = "、".join(
+                    SHOP_PURCHASE_REFERENCES[value].label
+                    for value in page.confirmation_shop_ids
+                )
+                self.task.log_warning(
+                    f"卖：向下滚动后未确认第{page.page_number}页边界卡带：{labels}。"
+                )
+                return False
+        self._sell_cartridge_page = target
+        return self._select_purchase_cartridge(shop_id)
 
     def _scroll_shop_cartridges(
         self,
@@ -456,59 +555,31 @@ class ShopCartridgeNavigationMixin:
         return None
 
     def _select_purchase_cartridge(self, shop_id: str) -> bool:
-        found = self._wait_for_cartridge_match(shop_id)
-        if found is None:
-            return False
-        frame, spec, result = found
-        self.vision.click_client(result.center, frame.shape, after_sleep=0.5)
-
-        end_at = monotonic() + 4.0
-        while monotonic() <= end_at:
-            selected_frame = self.vision.capture()
-            selected = self._confirmed_shop_cartridge_detections(selected_frame).get(
-                shop_id
-            )
-            if selected is not None:
-                brightness = self.vision.template_brightness_ratio(
-                    selected_frame,
-                    spec,
-                    selected.best.result,
-                    minimum_template_gray=SHOP_CARTRIDGE_BRIGHTNESS.foreground_min_gray,
-                )
-                self._status(f"卡带亮度 {shop_id}", f"{brightness:.3f}")
-                if SHOP_CARTRIDGE_BRIGHTNESS.is_selected(brightness):
-                    return True
-            self.task.sleep(0.25)
-        return False
-
-    def _select_shop_cartridge_from_first_page(self, shop_id: str) -> bool:
-        if shop_id not in SHOP_PURCHASE_REFERENCES:
-            self.task.log_warning(f"卖：本地商品卡带表缺少 {shop_id}。")
-            return False
-        if not self._reset_shop_to_first_page():
-            return False
-
-        for page in SHOP_CARTRIDGE_PAGES:
-            if page.scroll_down_from_previous:
-                self._scroll_shop_cartridges(
-                    scroll_amount=-1,
-                    count=page.scroll_down_from_previous,
-                    interval=SHOP_DOWN_SCROLL_INTERVAL,
-                    after_sleep=0.5,
-                )
-            if not self._wait_for_shop_page(page.confirmation_shop_ids):
-                labels = "、".join(
-                    SHOP_PURCHASE_REFERENCES[value].label
-                    for value in page.confirmation_shop_ids
-                )
-                self.task.log_warning(
-                    f"卖：向下滚动后未确认第{page.page_number}页边界卡带：{labels}。"
-                )
+        # 点击可能被游戏吞掉（已实测点击后亮度仍停留在未选中基准），确认窗耗尽后重试一次。
+        for _attempt in range(2):
+            found = self._wait_for_cartridge_match(shop_id)
+            if found is None:
                 return False
-            if shop_id in page.shop_ids:
-                return self._select_purchase_cartridge(shop_id)
+            frame, spec, result = found
+            self.vision.click_client(result.center, frame.shape, after_sleep=0.5)
 
-        self.task.log_warning(f"卖：本地商品卡带分页表未覆盖 {shop_id}。")
+            end_at = monotonic() + 4.0
+            while monotonic() <= end_at:
+                selected_frame = self.vision.capture()
+                selected = self._confirmed_shop_cartridge_detections(
+                    selected_frame
+                ).get(shop_id)
+                if selected is not None:
+                    brightness = self.vision.template_brightness_ratio(
+                        selected_frame,
+                        spec,
+                        selected.best.result,
+                        minimum_template_gray=SHOP_CARTRIDGE_BRIGHTNESS.foreground_min_gray,
+                    )
+                    self._status(f"卡带亮度 {shop_id}", f"{brightness:.3f}")
+                    if SHOP_CARTRIDGE_BRIGHTNESS.is_selected(brightness):
+                        return True
+                self.task.sleep(0.25)
         return False
 
     def _align_unfavorited_points(self, shop_id: str) -> bool:
@@ -645,5 +716,5 @@ class ShopCartridgeNavigationMixin:
         except KeyError:
             self.task.log_warning(f"卖：价表商店没有本地商品卡带映射：{shop}。")
             return False
-        return self._select_shop_cartridge_from_first_page(reference.shop_id)
+        return self._select_shop_cartridge_downward(reference.shop_id)
 
