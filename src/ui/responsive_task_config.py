@@ -31,11 +31,12 @@ _EXPAND_EASING = _build_expand_easing()
 class WrappingFlowLayout(QLayout):
     """A small flow layout that recomputes rows whenever its width changes."""
 
-    def __init__(self, parent=None, spacing=8, alignment=Qt.AlignLeft):
+    def __init__(self, parent=None, spacing=8, alignment=Qt.AlignLeft, max_columns=None):
         super().__init__(parent)
         self._items = []
         self._spacing = spacing
         self._flow_alignment = alignment
+        self._max_columns = max_columns
         super().setAlignment(alignment)
         self.setContentsMargins(0, 0, 0, 0)
 
@@ -109,7 +110,10 @@ class WrappingFlowLayout(QLayout):
                 if not row
                 else row_width + self._spacing + item_size.width()
             )
-            if row and proposed_width > available_width:
+            if row and (
+                proposed_width > available_width
+                or (self._max_columns is not None and len(row) >= self._max_columns)
+            ):
                 rows.append((row, row_width, row_height))
                 row = []
                 row_width = 0
@@ -143,10 +147,13 @@ class WrappingFlowLayout(QLayout):
 
 
 class ResponsiveFlowWidget(QWidget):
-    def __init__(self, alignment=Qt.AlignLeft):
+    def __init__(self, alignment=Qt.AlignLeft, max_columns=None):
+        # ok-script 2.x 的 LabelAndMultiSelection 构造时传 max_columns=2。
         super().__init__()
         self.alignment = alignment
-        self.flow_layout = WrappingFlowLayout(self, alignment=alignment)
+        self.flow_layout = WrappingFlowLayout(
+            self, alignment=alignment, max_columns=max_columns
+        )
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
     def add_widget(self, widget):
@@ -320,11 +327,11 @@ def apply_task_card_badge_and_style(card, task):
 def install_responsive_task_config_ui():
     """Make ok-script task settings shrink and reflow with the app window."""
 
-    from ok.gui.tasks import LabelAndMultiSelection as multi_selection_module
-    from ok.gui.tasks.ConfigCard import ConfigCard
-    from ok.gui.tasks.LabelAndTextEdit import LabelAndTextEdit
-    from ok.gui.tasks.LabelAndWidget import LabelAndWidget
-    from ok.gui.tasks.TaskCard import TaskCard
+    from ok.ui.qt.tasks import LabelAndMultiSelection as multi_selection_module
+    from ok.ui.qt.tasks.ConfigCard import ConfigCard
+    from ok.ui.qt.tasks.LabelAndTextEdit import LabelAndTextEdit
+    from ok.ui.qt.tasks.LabelAndWidget import LabelAndWidget
+    from ok.ui.qt.tasks.TaskCard import TaskCard
 
     if getattr(LabelAndWidget, "_bd2_responsive_ui_installed", False):
         return
