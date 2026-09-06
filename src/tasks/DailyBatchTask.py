@@ -325,9 +325,7 @@ class DailyBatchTask(BaseTask):
                 self.executor.reset_scene(check_enabled=False)
 
         self.info_set("当前子任务", "-")
-        self.info_set("完成", "、".join(completed) or "-")
-        self.info_set("失败", "、".join(failed) or "-")
-        self.info_set("跳过", "、".join(skipped) or "-")
+        publish_outcome()
         if failed:
             self.info_set("状态", "一键完成日常中止。")
             return False

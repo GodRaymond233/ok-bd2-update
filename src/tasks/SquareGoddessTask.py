@@ -9,7 +9,7 @@ from qfluentwidgets import FluentIcon
 from src.tasks.BaseBD2Task import BaseBD2Task
 from src.tasks.map_trade.models import MatchResult, TemplateSpec
 from src.utils import task_vision
-from src.utils.calibration import FHD_1080, HD_720, QHD_1440
+from src.utils.calibration import FHD_1080, HD_720
 from src.utils.cartridge_quick_switch import (
     CHARACTER_CATEGORY_LABEL,
     EVENT_CATEGORY_LABEL,
@@ -42,8 +42,6 @@ REFERENCE_WIDTH = FHD_1080.width
 REFERENCE_HEIGHT = FHD_1080.height
 HD720_REFERENCE_WIDTH = HD_720.width
 HD720_REFERENCE_HEIGHT = HD_720.height
-ENTRY_REFERENCE_WIDTH = QHD_1440.width
-ENTRY_REFERENCE_HEIGHT = QHD_1440.height
 SQUARE_CARTRIDGE_SLOT_POINT = (331 / REFERENCE_WIDTH, 970 / REFERENCE_HEIGHT)
 SQUARE_HOME_POINT = (1797 / REFERENCE_WIDTH, 63 / REFERENCE_HEIGHT)
 QUICK_SWITCH_PAGE_PATTERNS = (
@@ -61,8 +59,8 @@ class SquareGoddessTask(BaseBD2Task):
         "启用",
         "状态",
         "当前阶段",
-        "主页小屋按钮",
-        "主页亮度",
+        "主页抽抽乐 OCR 尝试",
+        "主页亮度p95",
         "主页抽抽乐 OCR",
         "广场主页点击次数",
         "快速切换按钮",
@@ -76,7 +74,6 @@ class SquareGoddessTask(BaseBD2Task):
         "广场每日导航",
         "广场导航文本 OCR",
         "广场导航文字命中",
-        "广场导航中",
         "女神像许愿结果",
         "匹配错误",
         "Log",
@@ -87,7 +84,6 @@ class SquareGoddessTask(BaseBD2Task):
     status_key_labels = {
         "梦幻广场": "梦幻广场模板",
         "广场每日导航": "每日导航模板",
-        "广场导航中": "导航中模板",
     }
 
     def __init__(self, *args, **kwargs):
@@ -129,7 +125,6 @@ class SquareGoddessTask(BaseBD2Task):
                 "广场感叹号阈值": 0.72,
                 "梦幻广场阈值": 0.78,
                 "广场每日导航阈值": 0.76,
-                "广场导航中阈值": 0.76,
             }
         )
         self.config_description.update(
@@ -587,12 +582,6 @@ class SquareGoddessTask(BaseBD2Task):
         self.info_set("广场导航文本 OCR", last_text or "-")
         return False
 
-    def _click_pray_until_gone(self, timeout: float) -> bool:
-        return self._wait_for_goddess_prayer_completion(timeout=timeout)
-
-    def _start_goddess_navigation(self, timeout: float) -> bool:
-        return self._click_goddess_daily_navigation_until(timeout=timeout)
-
     def _click_template_until(
         self,
         spec: TemplateSpec,
@@ -668,65 +657,6 @@ class SquareGoddessTask(BaseBD2Task):
 
         self.info_set(name, f"{last_score:.3f}")
         return False
-
-    def _click_ocr_pattern_until(
-        self,
-        patterns: list[str],
-        timeout: float,
-        name: str,
-        roi: tuple[int, int, int, int] | None = None,
-        target_offset_mf: tuple[int, int] = (0, 0),
-        after_sleep: float = 0.0,
-        interval: float = 0.5,
-    ) -> bool:
-        end_at = monotonic() + max(0.0, timeout)
-        last_text = ""
-        while monotonic() <= end_at:
-            frame = self.capture_frame()
-            frame_height, frame_width = frame.shape[:2]
-            point, text = self._ocr_pattern_click_point(frame, patterns, name=name, roi=roi)
-            last_text = text or last_text
-            self.info_set(f"{name} OCR", text or "-")
-            if point is not None:
-                offset_x, offset_y = self._mf_offset_for_frame(
-                    target_offset_mf[0],
-                    target_offset_mf[1],
-                    frame_width,
-                    frame_height,
-                )
-                self._click_client(
-                    point[0] + offset_x,
-                    point[1] + offset_y,
-                    frame_width,
-                    frame_height,
-                    after_sleep=after_sleep,
-                )
-                return True
-            self.sleep(interval)
-
-        self.info_set(f"{name} OCR", last_text or "-")
-        return False
-
-    def _find_ocr_click_point_until(
-        self,
-        patterns: list[str],
-        timeout: float,
-        name: str,
-        roi: tuple[int, int, int, int] | None = None,
-        interval: float = 0.5,
-    ) -> tuple[tuple[int, int] | None, tuple[int, int] | None, str]:
-        end_at = monotonic() + max(0.0, timeout)
-        last_text = ""
-        while monotonic() <= end_at:
-            frame = self.capture_frame()
-            frame_height, frame_width = frame.shape[:2]
-            point, text = self._ocr_pattern_click_point(frame, patterns, name=name, roi=roi)
-            last_text = text or last_text
-            if point is not None:
-                return point, (frame_height, frame_width), text
-            self.sleep(interval)
-
-        return None, None, last_text
 
     def _ocr_pattern_click_point(
         self,
@@ -829,51 +759,6 @@ class SquareGoddessTask(BaseBD2Task):
             int(round(top + (text_top + text_bottom) / 2)),
         ), text
 
-    def _find_template_until(
-        self,
-        spec: TemplateSpec,
-        timeout: float,
-        name: str,
-        interval: float = 0.35,
-    ) -> tuple[MatchResult | None, tuple[int, int] | None]:
-        end_at = monotonic() + max(0.0, timeout)
-        last_score = -1.0
-        while monotonic() <= end_at:
-            frame = self.capture_frame()
-            result = self._match(frame, spec)
-            last_score = result.score
-            self.info_set(name, f"{result.score:.3f}")
-            if self._passes(result, spec):
-                frame_height, frame_width = frame.shape[:2]
-                return result, (frame_height, frame_width)
-            self.sleep(interval)
-
-        self.info_set(name, f"{last_score:.3f}")
-        return None, None
-
-    def _find_square_label_until(
-        self,
-        timeout: float,
-        name: str,
-        interval: float = 0.5,
-    ) -> tuple[tuple[int, int] | None, tuple[int, int] | None]:
-        end_at = monotonic() + max(0.0, timeout)
-        last_text = ""
-        while monotonic() <= end_at:
-            frame = self.capture_frame()
-            frame_height, frame_width = frame.shape[:2]
-            boxes = self._ocr_boxes(frame, name=name)
-            text = " ".join(getattr(box, "name", "") for box in boxes if getattr(box, "name", ""))
-            last_text = text or last_text
-            self.info_set(f"{name} OCR", text or "-")
-            point = self._square_label_click_point(boxes, frame_width, frame_height)
-            if point is not None:
-                return point, (frame_height, frame_width)
-            self.sleep(interval)
-
-        self.info_set(f"{name} OCR", last_text or "-")
-        return None, None
-
     def _wait_for_template(
         self,
         spec: TemplateSpec,
@@ -894,49 +779,6 @@ class SquareGoddessTask(BaseBD2Task):
 
         self.info_set(name, f"{last_score:.3f}")
         return False
-
-    def _wait_for_ocr_requirements(
-        self,
-        requirements: list[tuple[str, float]],
-        timeout: float,
-        name: str,
-        roi: tuple[int, int, int, int] | None = None,
-        interval: float = 0.5,
-    ) -> tuple[bool, str]:
-        end_at = monotonic() + max(0.0, timeout)
-        last_text = ""
-        while monotonic() <= end_at:
-            frame = self.capture_frame()
-            entries = self._ocr_entries(frame, name=name, roi=roi)
-            text = " ".join(label for label, _confidence in entries)
-            last_text = text or last_text
-            self.info_set(f"{name} OCR", text or "-")
-            if self._ocr_requirements_met(entries, requirements):
-                return True, text
-            self.sleep(interval)
-
-        return False, last_text
-
-    def _wait_for_ocr_absent(
-        self,
-        patterns: list[str],
-        timeout: float,
-        name: str,
-        roi: tuple[int, int, int, int] | None = None,
-        interval: float = 0.5,
-    ) -> tuple[bool, str]:
-        end_at = monotonic() + max(0.0, timeout)
-        last_text = ""
-        while monotonic() <= end_at:
-            frame = self.capture_frame()
-            text = self._ocr_text(frame, name=name, roi=roi)
-            last_text = text or last_text
-            self.info_set(f"{name} OCR", text or "-")
-            if text and not self._matches_any(text, patterns):
-                return True, text
-            self.sleep(interval)
-
-        return False, last_text
 
     def _match(self, frame, spec: TemplateSpec) -> MatchResult:
         empty = MatchResult(-1.0, (0, 0), (0, 0))
@@ -1044,13 +886,6 @@ class SquareGoddessTask(BaseBD2Task):
             self.info_set(f"{name} OCR 错误", str(exc))
             return []
 
-    def _click_entry_reference(self, x: int, y: int, after_sleep: float = 0.0):
-        self.operate_click(
-            max(0.0, min(1.0, x / ENTRY_REFERENCE_WIDTH)),
-            max(0.0, min(1.0, y / ENTRY_REFERENCE_HEIGHT)),
-            after_sleep=after_sleep,
-        )
-
     def _click_client(
         self,
         x: int,
@@ -1064,25 +899,6 @@ class SquareGoddessTask(BaseBD2Task):
             max(0.0, min(1.0, y / max(1, frame_height))),
             after_sleep=after_sleep,
         )
-
-    def _drag_entry_reference(
-        self,
-        start: tuple[int, int],
-        end: tuple[int, int],
-        duration: float = 0.7,
-        after_sleep: float = 0.0,
-    ) -> None:
-        frame = self.capture_frame()
-        frame_height, frame_width = frame.shape[:2]
-        start_client = (
-            round(frame_width * start[0] / ENTRY_REFERENCE_WIDTH),
-            round(frame_height * start[1] / ENTRY_REFERENCE_HEIGHT),
-        )
-        end_client = (
-            round(frame_width * end[0] / ENTRY_REFERENCE_WIDTH),
-            round(frame_height * end[1] / ENTRY_REFERENCE_HEIGHT),
-        )
-        self.drag_client(start_client, end_client, duration=duration, after_sleep=after_sleep)
 
     def _home_p95_threshold(self) -> float:
         return float(self.config.get("主页压暗阈值", HOME_DIMMED_P95_THRESHOLD_DEFAULT))
@@ -1112,37 +928,6 @@ class SquareGoddessTask(BaseBD2Task):
             round(y * frame_height / HD720_REFERENCE_HEIGHT),
         )
 
-    def _ocr_requirements_met(
-        self,
-        entries: list[tuple[str, float]],
-        requirements: list[tuple[str, float]],
-    ) -> bool:
-        combined_text = " ".join(label for label, _confidence in entries)
-        for pattern, min_confidence in requirements:
-            if not self._ocr_requirement_met(entries, combined_text, pattern, min_confidence):
-                return False
-        return True
-
-    def _ocr_requirement_met(
-        self,
-        entries: list[tuple[str, float]],
-        combined_text: str,
-        pattern: str,
-        min_confidence: float,
-    ) -> bool:
-        normalized_pattern = self._normalize_text(pattern)
-        for label, confidence in entries:
-            if re.search(normalized_pattern, self._normalize_text(label), flags=re.IGNORECASE):
-                return confidence >= min_confidence
-
-        if not re.search(
-            normalized_pattern,
-            self._normalize_text(combined_text),
-            flags=re.IGNORECASE,
-        ):
-            return False
-        return any(confidence >= min_confidence for _label, confidence in entries)
-
     @staticmethod
     def _matches_any(text: str, patterns: list[str]) -> bool:
         normalized = SquareGoddessTask._normalize_text(text)
@@ -1151,37 +936,6 @@ class SquareGoddessTask(BaseBD2Task):
             if re.search(normalized_pattern, normalized, flags=re.IGNORECASE):
                 return True
         return False
-
-    @staticmethod
-    def _square_label_click_point(
-        boxes,
-        frame_width: int,
-        frame_height: int,
-    ) -> tuple[int, int] | None:
-        candidates = []
-        for box in boxes:
-            text = SquareGoddessTask._normalize_text(getattr(box, "name", ""))
-            if not text or "广场" not in text:
-                continue
-            x = getattr(box, "x", None)
-            y = getattr(box, "y", None)
-            width = getattr(box, "width", None)
-            height = getattr(box, "height", None)
-            if None in (x, y, width, height):
-                continue
-
-            center_x = int(round(float(x) + float(width) / 2))
-            center_y = int(round(float(y) + float(height) / 2))
-            if center_y < frame_height * 0.50:
-                continue
-            candidates.append((center_x, center_y, float(x)))
-
-        if not candidates:
-            return None
-
-        center_x, center_y, _left = min(candidates, key=lambda item: item[2])
-        click_y = int(round(center_y - frame_height * 0.085))
-        return center_x, max(0, click_y)
 
     _normalize_text = staticmethod(normalize_ocr_text)
     @staticmethod
@@ -1204,7 +958,12 @@ QUICK_SWITCH_TEMPLATE = TemplateSpec(
     green_mask=True,
     scale_ratios=(0.95, 0.975, 1.0, 1.025, 1.05),
     min_pixel_score=0.85,
-    candidate_center_roi=(650 / 1920, 950 / 1080, 1050 / 1920, 1045 / 1080),
+    candidate_center_roi=(
+        650 / FHD_1080.width,
+        950 / FHD_1080.height,
+        1050 / FHD_1080.width,
+        1045 / FHD_1080.height,
+    ),
     minimum_safe_threshold=0.88,
     # 梦幻广场内的快捷切换按钮是白图标+深色圆底样式，与模板采样的浅色
     # 样式存在结构差异：1600x901 实机帧 zncc 最高 0.838（RPT-20260902-225925），
@@ -1240,14 +999,6 @@ SQUARE_DAILY_ICON_TEMPLATE = TemplateSpec(
     default_threshold=0.76,
     roi=GODDESS_DAILY_REGION,
     min_pixel_score=0.72,
-)
-
-SQUARE_MISSION_NAVI_TEMPLATE = TemplateSpec(
-    name="square_mission_navigation",
-    file_name="image/Square_misstion_Nvi.png",
-    threshold_key="广场导航中阈值",
-    default_threshold=0.76,
-    roi=SquareGoddessTask._mf_roi(1168, 106, 69, 247),
 )
 
 GODDESS_NAVIGATION_TARGET = "移动至艾力克史温女"

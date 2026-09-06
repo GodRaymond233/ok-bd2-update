@@ -1,6 +1,5 @@
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -9,7 +8,7 @@ from typing import Any, Callable
 
 import cv2
 import numpy as np
-from ok import BaseTask, Box, Logger, og
+from ok import BaseTask, Box, Logger
 from PIL import Image
 
 from src.scene.BD2Scene import BD2Scene
@@ -148,18 +147,6 @@ class BaseBD2Task(BaseTask):
             return dict(getattr(self, "info", None) or {})
 
     @property
-    def thread_pool_executor(self) -> ThreadPoolExecutor | None:
-        if og.my_app is None:
-            return None
-        return og.my_app.get_thread_pool_executor()
-
-    @staticmethod
-    def submit_periodic_task(delay: float, task: Callable, *args, **kwargs):
-        if og.my_app is None:
-            return None
-        return og.my_app.submit_periodic_task(delay, task, *args, **kwargs)
-
-    @property
     def main_viewport(self) -> Box:
         return self.box_of_screen(0.05, 0.05, 0.95, 0.95, name="main_viewport")
 
@@ -218,34 +205,6 @@ class BaseBD2Task(BaseTask):
     @staticmethod
     def green_mask(template: np.ndarray, tolerance: int = GREEN_MASK_TOLERANCE) -> np.ndarray:
         return green_mask_from_template(template, tolerance=tolerance)
-
-    def find_one_green_mask(
-        self,
-        *args,
-        green_tolerance: int = GREEN_MASK_TOLERANCE,
-        match_method=cv2.TM_CCORR_NORMED,
-        **kwargs,
-    ):
-        kwargs["mask_function"] = lambda template: green_mask_from_template(
-            template,
-            tolerance=green_tolerance,
-        )
-        kwargs["match_method"] = match_method
-        return self.find_one(*args, **kwargs)
-
-    def find_green_mask_features(
-        self,
-        *args,
-        green_tolerance: int = GREEN_MASK_TOLERANCE,
-        match_method=cv2.TM_CCORR_NORMED,
-        **kwargs,
-    ):
-        kwargs["mask_function"] = lambda template: green_mask_from_template(
-            template,
-            tolerance=green_tolerance,
-        )
-        kwargs["match_method"] = match_method
-        return self.find_feature(*args, **kwargs)
 
     def click(
         self,
@@ -808,32 +767,9 @@ class BaseBD2Task(BaseTask):
             self._last_interval_action_time[action_name] = now
             return True
 
-    def run_with_interval(
-        self,
-        func: Callable,
-        interval: float,
-        *args,
-        action_name=None,
-        **kwargs,
-    ) -> Any:
-        action_name = action_name or getattr(func, "__qualname__", repr(func))
-        if not self._check_action_interval(action_name, interval):
-            return False
-        return func(*args, **kwargs)
-
     def mark_logged_in(self) -> None:
         if self.scene is not None:
             self.scene.set_logged_in(True)
-
-    def is_main(self) -> bool:
-        return bool(self.scene and self.scene.logged_in())
-
-    def wait_main(self, time_out: float = 30, raise_if_not_found: bool = False):
-        return self.wait_until(
-            self.is_main,
-            time_out=time_out,
-            raise_if_not_found=raise_if_not_found,
-        )
 
 
 def task_info_snapshot(task) -> dict:

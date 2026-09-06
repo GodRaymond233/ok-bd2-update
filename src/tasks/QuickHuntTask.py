@@ -9,21 +9,6 @@ from src.tasks.quick_hunt import (
 from src.tasks.task_vision_mixin import TaskVisionMixin
 from src.utils.home_confirmation import HOME_DIMMED_P95_THRESHOLD_DEFAULT
 
-DAILY_ONLY_CONFIG_KEYS = (
-    "执行公会签到",
-    "执行小屋签到",
-    "执行一键收菜",
-    "公会入口阈值",
-    "公会签到成功阈值",
-    "小屋页面阈值",
-    "加载页面阈值",
-    "loading 出现等待秒数",
-    "loading 消失等待秒数",
-    "公会签到成功等待秒数",
-    "小屋页面等待秒数",
-    "一键收菜菜单等待秒数",
-)
-
 
 class QuickHuntTask(
     QuickHuntFeatureMixin,
@@ -84,11 +69,6 @@ class QuickHuntTask(
         self.name = "快速狩猎"
         self.description = "从首页进入快速狩猎，调度米饭并补充数量最少的属性圣石。"
         self.icon = FluentIcon.GAME
-
-        for key in DAILY_ONLY_CONFIG_KEYS:
-            self.default_config.pop(key, None)
-            self.config_description.pop(key, None)
-            self.config_type.pop(key, None)
 
         self.default_config.pop("执行快速狩猎", None)
         self.config_description.pop("执行快速狩猎", None)

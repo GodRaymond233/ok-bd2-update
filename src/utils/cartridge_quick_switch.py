@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import numpy as np
 
+from src.utils.calibration import FHD_1080
 from src.utils.image_utils import relative_roi_frame
 
-REFERENCE_WIDTH = 1920
-REFERENCE_HEIGHT = 1080
+REFERENCE_WIDTH = FHD_1080.width
+REFERENCE_HEIGHT = FHD_1080.height
 
 RECENT_CATEGORY_LABEL = "最近"
 SHOPKEEPER_CATEGORY_LABEL = "店长游戏卡"

@@ -15,6 +15,7 @@ from src.tasks.task_vision_mixin import (
     REFERENCE_WIDTH,
     TaskVisionMixin,
 )
+from src.utils.calibration import HD_720
 from src.utils.home_confirmation import HOME_LEFT_COLUMN_REQUIRED_HITS
 
 QUICK_HUNT_CHILD_CONFIG_KEYS = (
@@ -54,6 +55,17 @@ def _quick_hunt_relative_roi(
 QUICK_HUNT_ENTRY_POINT = (1756 / REFERENCE_WIDTH, 262 / REFERENCE_HEIGHT)
 
 QUICK_HUNT_RED_POINT = (1782 / REFERENCE_WIDTH, 237 / REFERENCE_HEIGHT)
+
+# 红点判定（OpenCV HSV，H 0-179）：红色在 H 轴两端（<=10 或 >=170），
+# 饱和度与明度需同时达到下限，避免把粉/暗色 UI 元素误判为红点。
+RED_DOT_HUE_WRAPAROUND_MAXIMUM = 10
+RED_DOT_HUE_WRAPAROUND_MINIMUM = 170
+RED_DOT_SATURATION_MINIMUM = 140
+RED_DOT_VALUE_MINIMUM = 150
+
+# 菜单按钮可用态判定：灰度 >= 170 的"亮像素"占按钮区域至少 2%。
+BUTTON_ENABLED_BRIGHT_GRAY_MINIMUM = 170
+BUTTON_ENABLED_BRIGHT_MIN_RATIO = 0.02
 
 QUICK_HUNT_RESOURCE_CAPACITIES = {"米饭": 90}
 
@@ -514,9 +526,9 @@ class QuickHuntFeatureMixin:
         hsv = tuple(int(value) for value in hsv_pixel)
         hue, saturation, value = hsv
         is_red = (
-            (hue <= 10 or hue >= 170)
-            and saturation >= 140
-            and value >= 150
+            (hue <= RED_DOT_HUE_WRAPAROUND_MAXIMUM or hue >= RED_DOT_HUE_WRAPAROUND_MINIMUM)
+            and saturation >= RED_DOT_SATURATION_MINIMUM
+            and value >= RED_DOT_VALUE_MINIMUM
         )
         return is_red, (x, y), bgr, hsv
 
@@ -1035,7 +1047,8 @@ class QuickHuntFeatureMixin:
         if crop.size == 0:
             return False
         gray = TaskVisionMixin._to_gray(crop)
-        return float(np.mean(gray >= 170)) >= 0.02
+        bright_ratio = float(np.mean(gray >= BUTTON_ENABLED_BRIGHT_GRAY_MINIMUM))
+        return bright_ratio >= BUTTON_ENABLED_BRIGHT_MIN_RATIO
 
     def _quick_hunt_return_home(self) -> bool:
         self._status_set("快速狩猎当前阶段", "返回主页")
@@ -1111,7 +1124,7 @@ class QuickHuntFeatureMixin:
 
     def _click_mf_reference(self, x: int, y: int, after_sleep: float = 0.0):
         self.operate_click(
-            max(0.0, min(1.0, x / 1280)),
-            max(0.0, min(1.0, y / 720)),
+            max(0.0, min(1.0, x / HD_720.width)),
+            max(0.0, min(1.0, y / HD_720.height)),
             after_sleep=after_sleep,
         )

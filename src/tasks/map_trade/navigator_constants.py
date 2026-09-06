@@ -17,7 +17,7 @@ from src.tasks.map_trade.action_icons import (
 )
 from src.tasks.map_trade.card_status import StoryCardCompletion
 from src.tasks.map_trade.models import CardSpec, MapPageMode, MatchResult, TemplateSpec
-from src.utils.calibration import FHD_1080, reference_rect_to_relative_roi
+from src.utils.calibration import FHD_1080, HD_720, reference_rect_to_relative_roi
 from src.utils.cartridge_quick_switch import QUICK_SWITCH_PAGE_LABELS
 from src.utils.vision_models import FrameGeometry
 
@@ -28,7 +28,12 @@ QUICK_SWITCH_TEMPLATE = TemplateSpec(
     relative_roi=(0.25, 0.85, 0.65, 1.0),
     scale_ratios=(0.95, 0.975, 1.0, 1.025, 1.05),
     min_pixel_score=0.85,
-    candidate_center_roi=(650 / 1920, 950 / 1080, 1050 / 1920, 1045 / 1080),
+    candidate_center_roi=(
+        650 / FHD_1080.width,
+        950 / FHD_1080.height,
+        1050 / FHD_1080.width,
+        1045 / FHD_1080.height,
+    ),
     minimum_safe_threshold=0.88,
     # 与 SquareGoddessTask.QUICK_SWITCH_TEMPLATE 同一按钮：梦幻广场内暗色
     # 圆底样式在 1600x901 实机帧 zncc 最高 0.838（RPT-20260902-225925），
@@ -88,16 +93,16 @@ CLASSIFY_COOKING_MATERIALS_RELATIVE_ROI = reference_rect_to_relative_roi(
     FHD_1080,
 )
 QUICK_SWITCH_PAGE_KEYWORDS = QUICK_SWITCH_PAGE_LABELS
-STORY_CATEGORY_POINT = (557 / 1920, 877 / 1080)
+STORY_CATEGORY_POINT = (557 / FHD_1080.width, 877 / FHD_1080.height)
 STORY_CATEGORY_HIGHLIGHT_REGION = (
-    445 / 1920,
-    840 / 1080,
-    670 / 1920,
-    915 / 1080,
+    445 / FHD_1080.width,
+    840 / FHD_1080.height,
+    670 / FHD_1080.width,
+    915 / FHD_1080.height,
 )
 STORY_CATEGORY_HIGHLIGHT_MIN_RATIO = 0.05
-QUICK_SWITCH_CARTRIDGE_REGION = (0.0, 908 / 1080, 1.0, 1.0)
-QUICK_SWITCH_SCROLL_FOCUS_POINT = (43 / 1920, 974 / 1080)
+QUICK_SWITCH_CARTRIDGE_REGION = (0.0, 908 / FHD_1080.height, 1.0, 1.0)
+QUICK_SWITCH_SCROLL_FOCUS_POINT = (43 / FHD_1080.width, 974 / FHD_1080.height)
 QUICK_SWITCH_SCROLL_POINT = QUICK_SWITCH_SCROLL_FOCUS_POINT
 QUICK_SWITCH_SCROLL_RESET_AMOUNT = -1
 QUICK_SWITCH_SCROLL_RESET_COUNT = 24
@@ -128,7 +133,7 @@ STORY_BADGE_CANDIDATE_SCORE = 0.70
 STORY_BADGE_CANDIDATE_PIXEL_SCORE = 0.70
 STORY_BADGE_CANDIDATE_ZNCC_SCORE = 0.50
 STORY_BADGE_OCR_MIN_CONFIDENCE = 0.75
-STORY_BADGE_CENTER_REGION = (0.0, 919 / 1080, 1.0, 953 / 1080)
+STORY_BADGE_CENTER_REGION = (0.0, 919 / FHD_1080.height, 1.0, 953 / FHD_1080.height)
 STORY_BADGE_OCR_INNER_RADIUS_RATIO = 12.5 / 29
 STORY_BADGE_OCR_BINARY_THRESHOLD = 140
 STORY_BADGE_OCR_INNER_HEIGHT = 208
@@ -185,44 +190,47 @@ STORY_BADGE_SPECS = tuple(
     )
     for number in range(1, 21)
 )
-BARGAIN_POINT = (191 / 1920, 900 / 1080)
-BARGAIN_CONFIRM_POINT = (1047 / 1920, 652 / 1080)
+BARGAIN_POINT = (191 / FHD_1080.width, 900 / FHD_1080.height)
+BARGAIN_CONFIRM_POINT = (1047 / FHD_1080.width, 652 / FHD_1080.height)
 # 砍价确认后必须等待商店页 OCR 稳定出现，不能依赖固定延时。砍价弹窗未关闭时
 # 整帧 OCR 仍会读到“仓库/严加管理”，因此同时排除砍价弹窗专有文字。
 BARGAIN_SHOP_CONFIRM_POPUP_KEYWORD = "砍价成功率"
 BARGAIN_SHOP_CONFIRM_STABLE_HITS = 2
 DISCOUNT_SHOP_CLOSE_DIALOG_REGION = (
-    700 / 1920,
-    382 / 1080,
-    1220 / 1920,
-    694 / 1080,
+    700 / FHD_1080.width,
+    382 / FHD_1080.height,
+    1220 / FHD_1080.width,
+    694 / FHD_1080.height,
 )
 DISCOUNT_SHOP_CLOSE_KEYWORDS = (
     "折扣商店结束",
     "是否关闭折扣商店",
 )
-DISCOUNT_SHOP_CLOSE_POINT = (1045 / 1920, 639 / 1080)
-CHAPTER_HOME_POINT = (1797 / 1920, 63 / 1080)
+DISCOUNT_SHOP_CLOSE_POINT = (1045 / FHD_1080.width, 639 / FHD_1080.height)
+CHAPTER_HOME_POINT = (1797 / FHD_1080.width, 63 / FHD_1080.height)
 DISCOUNT_SHOP_CLOSE_TIMEOUT = 5.0
 RETURN_HOME_TIMEOUT = 10.0
 RETURN_HOME_ANNOUNCEMENT_MAX_CLICKS = 3
 RETURN_HOME_ANNOUNCEMENT_OCR_INTERVAL = 0.35
 RETURN_HOME_ANNOUNCEMENT_OCR_REGION = (
-    360 / 1920,
-    180 / 1080,
-    1560 / 1920,
-    900 / 1080,
+    360 / FHD_1080.width,
+    180 / FHD_1080.height,
+    1560 / FHD_1080.width,
+    900 / FHD_1080.height,
 )
 RETURN_HOME_ANNOUNCEMENT_KEYWORD_GROUPS = (
     ("更新", "抢先看"),
     ("7天内不再显示", "前往查看"),
 )
-SHOP_ENTRY_CLICK_RETRIES = 3
-SHOP_ENTRY_CLICK_INTERVAL = 0.5
 SHOP_CLOSE_CLICK_RETRIES = 2
 SHOP_CLOSE_CLICK_INTERVAL = 0.3
 # 关闭按钮与主页按钮是稳定 UI 控件：优先用模板命中后点击识别中心，
-# 模板未通过时才回退到已标定的相对坐标（1920×1080 参考点）。
+# 模板未通过时才回退到已标定的相对坐标。
+# ⚠ 参考系待实机核对（代码质量阶段 B-1）：下方点值原注释写"1920×1080 参考点"，
+# 但唯一生产消费方 navigator_trade 经 vision.click_reference 按 MAP_TRADE_REFERENCE
+# =HD_720（1280×720）归一；历史跑商定价死代码用同值同归一、运行时自洽，
+# 更可能是注释把参考分辨率写错。若确为 1080p 标定，运行时落点将偏约 40%。
+# 实机核对折扣商店关闭按钮回退落点前，按 1280×720 参考理解本值。
 DISCOUNT_SHOP_CLOSE_CONTROL_REFERENCE_POINT = (82, 36)
 DISCOUNT_SHOP_CLOSE_CONTROL_TEMPLATES = (
     TemplateSpec(
@@ -385,7 +393,6 @@ MERCHANT_CLICK_LOCATION_TEMPLATE = TemplateSpec(
     min_zncc_score=0.90,
 )
 MERCHANT_CLICK_LOCATION_FAILURE_MESSAGE = "未识别到MerchantClickLocation.png"
-MERCHANT_DIALOG_CONFIRM_TIMEOUT = 3.0
 # 箱庭内角色位置保持在上次离开处，传送进剧情卡6后商人地标不一定在视野内；
 # 此时经小地图导航菜单的"商店"目的地让游戏自动寻路到商人，再重新识别地标。
 MERCHANT_NAV_GUIDE_TEMPLATE = TemplateSpec(
@@ -394,6 +401,8 @@ MERCHANT_NAV_GUIDE_TEMPLATE = TemplateSpec(
 MERCHANT_AUTO_NAV_TEMPLATE = TemplateSpec(
     "自动移动", "image/AutoNvi_ico.png", 0.72, roi=(570, 580, 140, 120)
 )
+# 以下两个 OCR 区域与上方模板 roi 同属 map_trade 模块的 1280×720（MAP_TRADE_REFERENCE）
+# 参考系，由 vision.reference_roi / match 统一缩放（代码质量阶段 B-1 补注）。
 MERCHANT_NAV_MENU_OCR_ROI = (220, 40, 360, 340)
 MERCHANT_NAV_CONFIRM_OCR_ROI = (620, 350, 230, 240)
 MERCHANT_NAV_GUIDE_TIMEOUT = 3.0
@@ -407,14 +416,24 @@ SANDBOX_NAVIGATION_PIN_TEMPLATE = TemplateSpec(
     "箱庭小地图图钉",
     "image/pin.png",
     0.72,
-    candidate_center_roi=(100 / 1280, 70 / 720, 210 / 1280, 180 / 720),
+    candidate_center_roi=(
+        100 / HD_720.width,
+        70 / HD_720.height,
+        210 / HD_720.width,
+        180 / HD_720.height,
+    ),
 )
 SANDBOX_NAVIGATION_RUN_TEMPLATE = TemplateSpec(
     "箱庭小地图自动移动",
     "image/green/Run.png",
     0.72,
     green_mask=True,
-    candidate_center_roi=(100 / 1280, 70 / 720, 210 / 1280, 180 / 720),
+    candidate_center_roi=(
+        100 / HD_720.width,
+        70 / HD_720.height,
+        210 / HD_720.width,
+        180 / HD_720.height,
+    ),
 )
 SANDBOX_NAVIGATION_OPEN_TEMPLATES = (
     SANDBOX_NAVIGATION_PIN_TEMPLATE,
@@ -620,12 +639,17 @@ SANDBOX_MAP_TELEPORT_TEMPLATE = TemplateSpec(
     "image/green/SandboxNviTpCircleMapGE.png",
     0.72,
 )
-TELEPORT_MAP_HEADER_OCR_RELATIVE_ROI = (180 / 1920, 0.0, 900 / 1920, 110 / 1080)
+TELEPORT_MAP_HEADER_OCR_RELATIVE_ROI = (
+    180 / FHD_1080.width,
+    0.0,
+    900 / FHD_1080.width,
+    110 / FHD_1080.height,
+)
 SANDBOX_LARGE_MAP_FOOTER_OCR_RELATIVE_ROI = (
-    100 / 1920,
-    900 / 1080,
-    1850 / 1920,
-    1070 / 1080,
+    100 / FHD_1080.width,
+    900 / FHD_1080.height,
+    1850 / FHD_1080.width,
+    1070 / FHD_1080.height,
 )
 TELEPORT_MAP_DIRECT_HEADER_TEMPLATE = TemplateSpec(
     "交互直传页图标",

@@ -32,10 +32,8 @@ class BD2ProbeTask(BaseBD2Task):
         frame = self.capture_frame(f"bd2_probe_{timestamp}")
         boxes = self.ocr_frame(
             frame=frame,
-            threshold=float(self.config.get("OCR 识别阈值", self.config.get("OCR Threshold", 0.2))),
-            screenshot=bool(
-                self.config.get("保存 OCR 调试截图", self.config.get("Save OCR Screenshot", False))
-            ),
+            threshold=float(self.config.get("OCR 识别阈值", 0.2)),
+            screenshot=bool(self.config.get("保存 OCR 调试截图", False)),
         )
 
         lines = [

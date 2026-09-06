@@ -1,20 +1,22 @@
 from pathlib import Path, PurePosixPath
 
+from src.utils.calibration import FHD_1080, HD_720
+
 OFFLINE_TEMPLATE_ROOT_NAME = "template-assets"
 OFFLINE_GREEN_TEMPLATE_DIR = "green"
 OFFLINE_TEMPLATE_REFERENCE_RESOLUTIONS = {
-    "image": (1280, 720),
-    "root": (1920, 1080),
+    "image": HD_720.size,
+    "root": FHD_1080.size,
 }
 OFFLINE_TEMPLATE_REFERENCE_SCALES = {
     "image": 1.25,
     "root": 1.0,
 }
 MAIN_TEMPLATE_RELATIVE_REGION = (
-    120 / 1920,
-    117 / 1080,
-    419 / 1920,
-    326 / 1080,
+    120 / FHD_1080.width,
+    117 / FHD_1080.height,
+    419 / FHD_1080.width,
+    326 / FHD_1080.height,
 )
 
 
@@ -104,7 +106,7 @@ def offline_template_scale(
             else OFFLINE_TEMPLATE_REFERENCE_SCALES[group]
         )
     client_scale = min(
-        max(1, int(frame_width)) / 1920,
-        max(1, int(frame_height)) / 1080,
+        max(1, int(frame_width)) / FHD_1080.width,
+        max(1, int(frame_height)) / FHD_1080.height,
     )
     return baseline_scale * client_scale

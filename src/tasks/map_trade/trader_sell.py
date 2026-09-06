@@ -19,21 +19,7 @@ from src.tasks.map_trade.models import (
     CalendarEntry,
     ScreenState,
 )
-from src.tasks.map_trade.trader_constants import (  # noqa: F401
-    BUY_ALL_FAVORITES_INTERVAL,
-    BUY_ALL_FAVORITES_KEYWORD,
-    BUY_ALL_FAVORITES_STABLE_HITS,
-    BUY_ALL_FAVORITES_TIMEOUT,
-    BUY_CONFIRM_DIALOG_REGION,
-    BUY_CONFIRM_INTERVAL,
-    BUY_CONFIRM_KEYWORDS,
-    BUY_CONFIRM_POINT,
-    BUY_CONFIRM_POST_CLICK_DELAY,
-    BUY_CONFIRM_PRE_CLICK_DELAY,
-    BUY_CONFIRM_TIMEOUT,
-    CALENDAR_DIR,
-    COOK_SUBMENU_TEMPLATE,
-    PROJECT_ROOT,
+from src.tasks.map_trade.trader_constants import (
     SALE_120_PERCENT_MARKER_MAX_RESULTS,
     SALE_120_PERCENT_MARKER_PEAK_RADIUS,
     SALE_120_PERCENT_MARKER_TEMPLATE,
@@ -56,52 +42,36 @@ from src.tasks.map_trade.trader_constants import (  # noqa: F401
     SALE_MIN_POINT,
     SALE_OCR_INTERVAL,
     SALE_OWNED_PATTERN,
-    SALE_PLUS_TEN_POINT,
     SALE_SLIDER_REGION,
     SALE_TOAST_ID_PATTERN,
     SELL_MODE_POINT,
-    SHOP_CARTRIDGE_CANDIDATE_SCORE,
-    SHOP_CARTRIDGE_CATEGORY_PATTERN,
-    SHOP_CARTRIDGE_CATEGORY_PREFIX,
-    SHOP_CARTRIDGE_CONFIRM_SCORE,
-    SHOP_CARTRIDGE_MIN_MARGIN,
-    SHOP_CARTRIDGE_NAME_MIN_SIMILARITY,
-    SHOP_CARTRIDGE_OCR_MIN_CONFIDENCE,
-    SHOP_CARTRIDGE_OCR_ROW_LINK_RADIUS,
-    SHOP_CARTRIDGE_RECOGNITION_REGION,
-    SHOP_CARTRIDGE_ROW_CLUSTER_RADIUS,
-    SHOP_CARTRIDGE_SCALE_RATIOS,
-    SHOP_CARTRIDGE_SCROLL_POINT,
-    SHOP_CARTRIDGE_SCROLL_REGION,
-    SHOP_DOWN_SCROLL_INTERVAL,
-    SHOP_FIRST_PAGE_MAX_UP_SCROLLS,
     SHOP_MODE_INTERVAL,
     SHOP_MODE_SWITCH_MAX_CLICKS,
     SHOP_MODE_TIMEOUT,
     SHOP_MODE_TITLE_REGION,
-    SHOP_UP_SCROLL_RECOGNITION_INTERVAL,
-    STAR_ADD_TOAST_KEYWORD,
-    STAR_PIXEL_THRESHOLD,
-    STAR_POST_CLICK_DELAY,
-    STAR_REMOVE_TOAST_KEYWORD,
-    STAR_ROI_HALF_SIZE_X,
-    STAR_ROI_HALF_SIZE_Y,
-    STAR_TEMPLATE_FILE,
-    STAR_TEMPLATE_THRESHOLD,
-    STAR_VERIFY_ATTEMPTS,
-    STAR_VERIFY_INTERVAL,
     SaleItemCandidate,
-    ShopCartridgeDetection,
-    ShopCartridgeOcrRow,
-    ShopCartridgeOcrText,
-    ShopCartridgeTemplateCandidate,
-    split_items,
 )
 from src.tasks.map_trade.vision import normalize_text
+from src.utils.calibration import FHD_1080
 from src.utils.image_utils import to_gray
+
+# 等待单个日历条目全部可售卡片 OCR 确认的总时长与轮询间隔。
+SALE_ITEM_CANDIDATES_WAIT_TIMEOUT = 8.0
+SALE_ITEM_CANDIDATES_POLL_INTERVAL = 0.5
 
 
 class SellFlowMixin:
+    # 以下实例状态由 Trader.__init__ 初始化；类级默认值保证裸构造的 mixin（含测试）
+    # 也能直接属性访问，替代原先散落的 getattr 兜底。
+    _buy_completed_in_current_shop = False
+    _last_sale_unavailable = False
+    _last_sale_reason = ""
+    _last_sale_name_seen = False
+    _last_sale_ocr_output = False
+    _last_sale_page_empty = False
+    _sale_entries_override: list[CalendarEntry] | None = None
+    _last_sale_toast_id: int | None = None
+
     def run_sell(self) -> bool:
         entries = self._resolve_sale_entries()
         if entries is None:
@@ -113,7 +83,7 @@ class SellFlowMixin:
             self.task.log_info("卖：当前价表没有可出售商品，跳过进入出售页面。")
             return True
 
-        if getattr(self, "_buy_completed_in_current_shop", False):
+        if self._buy_completed_in_current_shop:
             self.task.log_info("卖：买卖同时执行，继续使用当前商店并等待购买结果。")
             if not self._switch_from_completed_buy_to_sell():
                 return False
@@ -139,8 +109,6 @@ class SellFlowMixin:
     def _ensure_sell_page(
         self,
         timeout: float = SHOP_MODE_TIMEOUT,
-        *,
-        allow_switch: bool = True,
     ) -> bool:
         end_at = monotonic() + max(0.0, timeout)
         switch_clicks = 0
@@ -159,7 +127,6 @@ class SellFlowMixin:
                 return True
             if (
                 "购买" in normalized
-                and allow_switch
                 and switch_clicks < SHOP_MODE_SWITCH_MAX_CLICKS
             ):
                 switch_clicks += 1
@@ -177,14 +144,10 @@ class SellFlowMixin:
         )
         return False
 
-    def sell_max_price_items(
-        self,
-        entries: list[CalendarEntry] | None = None,
-    ) -> bool:
+    def sell_max_price_items(self) -> bool:
+        entries = self._sale_entries_override
         if entries is None:
-            entries = getattr(self, "_sale_entries_override", None)
-            if entries is None:
-                entries = self._resolve_sale_entries()
+            entries = self._resolve_sale_entries()
         if entries is None:
             return False
         if not entries:
@@ -282,7 +245,7 @@ class SellFlowMixin:
                     continue
                 selected_shop = entry.shop
             if not self._sell_selected_entry(entry):
-                if getattr(self, "_last_sale_unavailable", False):
+                if self._last_sale_unavailable:
                     detail = f"{entry.item}（{self._last_sale_reason}）"
                     unavailable.append(detail)
                     not_sold_details.append(detail)
@@ -303,12 +266,6 @@ class SellFlowMixin:
             self.task.log_warning("最高价出售失败：" + "、".join(entry.item for entry in failed))
         return not failed
 
-    def sell_entry(self, entry: CalendarEntry) -> bool:
-        self._sell_cartridge_page = None
-        if not self.select_shop_tab(entry.shop):
-            return False
-        return self._sell_selected_entry(entry)
-
     def _sell_selected_entry(self, entry: CalendarEntry) -> bool:
         self._last_sale_unavailable = False
         self._last_sale_reason = ""
@@ -318,7 +275,7 @@ class SellFlowMixin:
         while True:
             located = self._wait_sale_item_candidates(entry)
             if located is None:
-                if sold_count and getattr(self, "_last_sale_page_empty", False):
+                if sold_count and self._last_sale_page_empty:
                     self._last_sale_unavailable = False
                     self._last_sale_reason = ""
                     self._status(
@@ -333,13 +290,13 @@ class SellFlowMixin:
                 if sold_count:
                     self.task.log_warning(
                         f"卖：{entry.item}出售后仍可见商品名但120%标志未确认"
-                        f"（{getattr(self, '_last_sale_reason', '') or '未知原因'}），"
+                        f"（{self._last_sale_reason or '未知原因'}），"
                         "不能判定当前页已售完。"
                     )
-                elif not getattr(self, "_last_sale_unavailable", False):
+                elif not self._last_sale_unavailable:
                     self.task.log_warning(
                         f"卖：{entry.item}商品名与左侧120%局部定位失败："
-                        f"{getattr(self, '_last_sale_reason', '') or '未知原因'}"
+                        f"{self._last_sale_reason or '未知原因'}"
                     )
                 return False
 
@@ -371,7 +328,7 @@ class SellFlowMixin:
 
         before_signature = self._sale_name_signature(entry, frame)
         before_toast_id = self._sale_toast_id(frame)
-        known_toast_id = getattr(self, "_last_sale_toast_id", None)
+        known_toast_id = self._last_sale_toast_id
         if known_toast_id is not None:
             before_toast_id = max(before_toast_id or 0, known_toast_id)
         self.vision.click_client(candidate.center, frame.shape, after_sleep=0.5)
@@ -434,8 +391,8 @@ class SellFlowMixin:
     def _wait_sale_item_candidates(
         self,
         entry: CalendarEntry,
-        timeout: float = 8.0,
-        interval: float = 0.5,
+        timeout: float = SALE_ITEM_CANDIDATES_WAIT_TIMEOUT,
+        interval: float = SALE_ITEM_CANDIDATES_POLL_INTERVAL,
     ) -> tuple[list[SaleItemCandidate], np.ndarray] | None:
         """Wait for all OCR-confirmed sale cards for one calendar entry."""
 
@@ -448,10 +405,10 @@ class SellFlowMixin:
             if candidates:
                 self._last_sale_page_empty = False
                 return candidates, frame
-            last_reason = str(getattr(self, "_last_sale_reason", "") or "")
-            if getattr(self, "_last_sale_name_seen", False):
+            last_reason = self._last_sale_reason or ""
+            if self._last_sale_name_seen:
                 empty_name_hits = 0
-            elif getattr(self, "_last_sale_ocr_output", False):
+            elif self._last_sale_ocr_output:
                 empty_name_hits += 1
             else:
                 empty_name_hits = 0
@@ -489,8 +446,8 @@ class SellFlowMixin:
             return None
         x, y, width, height = geometry
         frame_height, frame_width = frame_shape[:2]
-        scale_x = frame_width / 1920.0
-        scale_y = frame_height / 1080.0
+        scale_x = frame_width / FHD_1080.width
+        scale_y = frame_height / FHD_1080.height
         search_width = round(SALE_MARKER_SEARCH_WIDTH * scale_x)
         padding = round(SALE_MARKER_VERTICAL_PADDING * scale_y)
         left = max(0, round(x) - search_width)
@@ -1043,14 +1000,3 @@ class SellFlowMixin:
         ratio = max(0.0, min(1.0, ratio))
         left, top, right, bottom = SALE_SLIDER_REGION
         return left + ((right - left) * ratio), (top + bottom) / 2
-
-    @staticmethod
-    def _box_values(box) -> tuple[float, float, float, float] | None:
-        values = tuple(getattr(box, key, None) for key in ("x", "y", "width", "height"))
-        if any(value is None for value in values):
-            raw_box = getattr(box, "box", None)
-            if raw_box is not None and len(raw_box) >= 4:
-                values = tuple(raw_box[:4])
-        if any(value is None for value in values):
-            return None
-        return tuple(float(value) for value in values)

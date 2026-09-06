@@ -1,6 +1,5 @@
 from qfluentwidgets import FluentIcon
 
-from src.Labels import Labels
 from src.tasks.BaseBD2Task import BaseBD2Task
 
 
@@ -19,6 +18,3 @@ class BD2OneTimeTask(BaseBD2Task):
         self.info_set("状态", "BD2 基础检查任务已就绪。")
         self.log_completion("BD2 基础检查已执行。")
         return True
-
-    def find_confirm_button(self):
-        return self.find_one(Labels.confirm_button)

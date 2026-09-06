@@ -75,6 +75,15 @@ BUSINESS_COLLECT_KEYWORDS = [
     "一键获得",
 ]
 
+# 以下点击点均为 1920×1080 参考（_click_reference 按当前客户区归一）。
+GUILD_SIGN_IN_ENTRY_REFERENCE_POINT = (370, 155)
+GUILD_SIGN_IN_SUCCESS_ACKNOWLEDGE_REFERENCE_POINT = (450, 650)
+BACK_BUTTON_REFERENCE_POINT = (100, 50)
+MY_HOME_ENTRY_REFERENCE_POINT = (166, 158)
+BUSINESS_COLLECT_ENTRY_REFERENCE_POINT = (165, 260)
+BUSINESS_COLLECT_CLAIM_REFERENCE_POINT = (1090, 814)
+BUSINESS_COLLECT_CLOSE_REFERENCE_POINT = (832, 814)
+
 
 class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
     include_quick_hunt_config = False
@@ -258,7 +267,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
 
         self._status_set("公会判断", "已识别入口，进入公会")
         self._sleep_after_recognition()
-        self._click_reference(370, 155, after_sleep=0.5)
+        self._click_reference(*GUILD_SIGN_IN_ENTRY_REFERENCE_POINT, after_sleep=0.5)
         loading_state, success_found, text = self._wait_loading_or_template_or_ocr(
             "公会签到",
             GUILD_SIGNUP_SUCCESS_TEMPLATE,
@@ -286,7 +295,9 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
         if success_found:
             self.log_info("公会签到：检测到签到成功提示。")
             self._sleep_after_recognition()
-            self._click_reference(450, 650, after_sleep=0.5)
+            self._click_reference(
+                *GUILD_SIGN_IN_SUCCESS_ACKNOWLEDGE_REFERENCE_POINT, after_sleep=0.5
+            )
         else:
             self.log_info("公会签到：未检测到签到成功提示，按流程返回主页。")
 
@@ -301,7 +312,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
         """
         home_ok = False
         for attempt in range(1, 4):
-            self._click_reference(100, 50, after_sleep=1.0)
+            self._click_reference(*BACK_BUTTON_REFERENCE_POINT, after_sleep=1.0)
             if self._wait_for_home_confirmation("公会签到返回主页", timeout=4.0):
                 home_ok = True
                 break
@@ -321,7 +332,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
         if not self._wait_for_home_confirmation("小屋签到入口前主页确认"):
             return False
 
-        self._click_reference(166, 158, after_sleep=0.5)
+        self._click_reference(*MY_HOME_ENTRY_REFERENCE_POINT, after_sleep=0.5)
         loading_state, found = self._wait_loading_or_template(
             "小屋签到",
             MY_HOME_TEMPLATE,
@@ -346,7 +357,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
         if found:
             self.log_info("小屋签到：已进入小屋页面，返回主页。")
             self._sleep_after_recognition()
-            self._click_reference(100, 50, after_sleep=1.0)
+            self._click_reference(*BACK_BUTTON_REFERENCE_POINT, after_sleep=1.0)
         else:
             self.log_info("小屋签到：未检测到 my-home.png，不执行返回点击。")
             self._status_set("小屋签到返回主页结果", "未执行")
@@ -360,7 +371,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
         if not self._wait_for_home_confirmation("一键收菜入口前主页确认"):
             return False
 
-        self._click_reference(165, 260, after_sleep=1.0)
+        self._click_reference(*BUSINESS_COLLECT_ENTRY_REFERENCE_POINT, after_sleep=1.0)
         found, text = self._wait_for_ocr_keywords(
             BUSINESS_COLLECT_KEYWORDS,
             timeout=float(self.config.get("一键收菜菜单等待秒数", 8.0)),
@@ -375,9 +386,9 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
             return False
 
         self.sleep(0.5)
-        self._click_reference(1090, 814, after_sleep=2.0)
-        self._click_reference(832, 814, after_sleep=1.0)
-        self._click_reference(832, 814)
+        self._click_reference(*BUSINESS_COLLECT_CLAIM_REFERENCE_POINT, after_sleep=2.0)
+        self._click_reference(*BUSINESS_COLLECT_CLOSE_REFERENCE_POINT, after_sleep=1.0)
+        self._click_reference(*BUSINESS_COLLECT_CLOSE_REFERENCE_POINT)
         home_ok = self._wait_for_home_confirmation("一键收菜返回主页")
         self._status_set("一键收菜返回主页结果", "通过" if home_ok else "失败")
         return home_ok

@@ -21,6 +21,9 @@ from src.diagnostics.redaction import DiagnosticRedactor
 SCHEMA_VERSION = 1
 MAX_DESCRIPTION_CHARS = 2000
 MAX_LOG_BYTES = 4 * 1024 * 1024
+
+# 截图压包尝试表（最大宽度, JPEG 质量）：从高到低直到满足体积上限。
+SCREENSHOT_ENCODE_ATTEMPTS = ((2560, 82), (1920, 70), (1600, 58))
 MAX_SCREENSHOT_BYTES = 6 * 1024 * 1024
 MAX_ARCHIVE_BYTES = 15 * 1024 * 1024
 MAX_DIAGNOSTIC_FRAME_COUNT = 8
@@ -451,7 +454,7 @@ def _encode_frame(
     image = frame.copy()
     height, width = image.shape[:2]
     original_resolution = f"{width}x{height}"
-    attempts = ((2560, 82), (1920, 70), (1600, 58))
+    attempts = SCREENSHOT_ENCODE_ATTEMPTS
     for max_width, quality in attempts:
         candidate = image
         if width > max_width:

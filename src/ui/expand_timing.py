@@ -77,30 +77,6 @@ def expand_timing_enabled() -> bool:
     return _enabled
 
 
-def dump_trace_log() -> list:
-    """Return collected trace log and clear it. Format: [(t_ns, event, card_id), ...]"""
-    global _TRACE_LOG
-    result = list(_TRACE_LOG)
-    _TRACE_LOG.clear()
-    return result
-
-
-def get_driver_trace() -> list[dict]:
-    """Get detailed trace with timing and geometry from all active drivers.
-
-    Returns list of dicts with keys: t_mono_ns, event, card_id, progress, height, bar_value
-    """
-    global _TRACE_LOG
-    result = list(_TRACE_LOG)
-    return result
-
-
-def clear_driver_trace() -> None:
-    """Clear the trace log without returning it."""
-    global _TRACE_LOG
-    _TRACE_LOG.clear()
-
-
 def _suppressed_start(*_args, **_kwargs):
     """Instance-level shadow for ``expandAni.start`` inside the wrapper."""
 

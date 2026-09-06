@@ -25,6 +25,12 @@ def _build_expand_easing() -> QEasingCurve:
     return curve
 
 
+# 展开动画时长随内容高度线性伸展，收起略快（见 setExpand 处注释）。
+EXPAND_DURATION_MIN_MS = 280
+EXPAND_DURATION_MAX_MS = 420
+EXPAND_DURATION_BASE_MS = 240
+EXPAND_DURATION_HEIGHT_RATIO = 0.28
+EXPAND_COLLAPSE_DURATION_RATIO = 0.85
 _EXPAND_EASING = _build_expand_easing()
 
 
@@ -439,7 +445,13 @@ def install_responsive_task_config_ui():
         # the end over several sub-pixel frames.  Duration scales with distance
         # so per-frame travel stays comparable across card sizes; collapse runs
         # slightly quicker, which reads as responsive rather than hurried.
-        base_duration = min(420, max(280, int(240 + content_height * 0.28)))
+        base_duration = min(
+            EXPAND_DURATION_MAX_MS,
+            max(
+                EXPAND_DURATION_MIN_MS,
+                int(EXPAND_DURATION_BASE_MS + content_height * EXPAND_DURATION_HEIGHT_RATIO),
+            ),
+        )
         self.expandAni.setEasingCurve(_EXPAND_EASING)
 
         if is_expand:
@@ -452,7 +464,7 @@ def install_responsive_task_config_ui():
             # the header, so any value past content_height produces no motion.
             # Overshooting it spends part of the duration on a frozen card and
             # doubles the travel in the frames that do move.
-            self.expandAni.setDuration(int(base_duration * 0.85))
+            self.expandAni.setDuration(int(base_duration * EXPAND_COLLAPSE_DURATION_RATIO))
             self.expandAni.setStartValue(0)
             self.expandAni.setEndValue(content_height)
 

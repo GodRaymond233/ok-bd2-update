@@ -202,11 +202,7 @@ class AutoLoginTask(BaseBD2Task):
 
         return self._wait_browndustx_then_login(frame)
 
-    def _wait_browndustx_then_login(
-        self,
-        frame,
-        browndustx: MatchResult | None = None,
-    ) -> bool:
+    def _wait_browndustx_then_login(self, frame) -> bool:
         boxes, login_text = self._login_page_ocr(frame)
         download_button = self._find_update_download_button(boxes)
         if download_button is not None:
@@ -229,10 +225,9 @@ class AutoLoginTask(BaseBD2Task):
             self.log_info(f"自动登录：游戏数据正在下载，progress={progress}")
             return False
 
-        if browndustx is None:
-            browndustx = self._match(frame, BROWNDUSTX_TEMPLATE)
-            self.info_set("BrownDustX", f"{browndustx.score:.3f}")
-            self.info_set("BrownDustX 像素", f"{browndustx.pixel_score:.3f}")
+        browndustx = self._match(frame, BROWNDUSTX_TEMPLATE)
+        self.info_set("BrownDustX", f"{browndustx.score:.3f}")
+        self.info_set("BrownDustX 像素", f"{browndustx.pixel_score:.3f}")
 
         # Confirm must be checked independently. The BrownDustX panel contains
         # version-dependent text, so its coarse template cannot gate the stable
@@ -454,10 +449,6 @@ class AutoLoginTask(BaseBD2Task):
 
     def _wait_loading_then_home(self, frame) -> bool:
         now = monotonic()
-
-        if self._state == "waiting_loading":
-            if self._waiting_home_since is None:
-                self._waiting_home_since = now
 
         self.info_set("TOUCH TO START", "-")
 
@@ -783,10 +774,6 @@ class AutoLoginTask(BaseBD2Task):
             return True
         pixel_threshold = float(self.config.get("BrownDustX 像素阈值", 0.86))
         return browndustx.pixel_score >= pixel_threshold
-
-    def _record_browndustx_text(self, frame, browndustx: MatchResult) -> None:
-        text = self._ocr_match_region_text(frame, browndustx, name="browndustx_loading_ocr")
-        self.info_set("BrownDustX OCR", text or "-")
 
     def _is_browndustx_confirm(
         self,

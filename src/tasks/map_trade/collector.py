@@ -5,46 +5,13 @@ from copy import deepcopy
 
 from src.tasks.map_trade.action_icons import ActionIconDetector
 from src.tasks.map_trade.card_status import CollectionCardSelectionOutcome
-from src.tasks.map_trade.collector_constants import (  # noqa: F401
+from src.tasks.map_trade.collector_constants import (
     ABSORB_ACTION,
-    ACTION_AFTER_CLICK_SECONDS,
-    ACTION_FAILURE_FEEDBACK,
-    ACTION_FEEDBACK_CHARACTER_RATIO,
-    ACTION_FEEDBACK_REFERENCE_ROI,
-    ACTION_FEEDBACK_RELATIVE_ROI,
-    ACTION_FEEDBACK_SUCCESS_DELAY_SECONDS,
-    ACTION_FEEDBACK_TIMEOUT,
-    ACTION_ICON_DETECTION_INTERVAL,
-    ACTION_ICON_DETECTION_SAMPLES,
-    ACTION_OCR_WINDOW_INTERVAL,
-    ACTION_OCR_WINDOW_SAMPLES,
-    ACTION_SUCCESS_FEEDBACK,
     BATTLE_ACTIONS,
-    SEARCH_ACTION,
-    SEARCH_COUNTDOWN_INTERVAL,
-    SEARCH_COUNTDOWN_PATTERN,
-    SEARCH_COUNTDOWN_REFERENCE_ROI,
-    SEARCH_COUNTDOWN_RELATIVE_ROI,
-    SEARCH_COUNTDOWN_TIMEOUT,
     SKILL_FAILURE_EVIDENCE_LIMIT,
     SKILL_FAILURE_TEXT_LIMIT,
-    SKILL_FIXED_COUNT_REFERENCE_ROIS,
-    SKILL_FIXED_COUNT_RELATIVE_ROIS,
-    SKILL_GROUP_REFERENCE_POINTS,
-    SKILL_GROUP_RELATIVE_POINTS,
-    SKILL_GROUP_SWITCH_SETTLE_SECONDS,
-    SKILL_OCR_FALLBACK_UPSCALE,
-    SKILL_OCR_UPSCALE,
-    SKILL_REFERENCE_SIZE,
-    SUMMON_ACTION,
-    SUPPRESS_ACTION,
     UNSUPPORTED_COLLECTION_CARD_NUMBERS,
-    SearchCountdownSession,
-    SkillAction,
     SkillExecutionResult,
-    SkillFeedbackObservation,
-    _relative_reference_point,
-    _relative_reference_roi,
 )
 from src.tasks.map_trade.collector_skills import SkillExecutionMixin
 from src.tasks.map_trade.models import (
@@ -59,6 +26,9 @@ from src.tasks.map_trade.models import (
 from src.tasks.map_trade.navigator import Navigator
 from src.tasks.map_trade.progress import ProgressStore
 from src.tasks.map_trade.vision import Vision
+
+# "卡带单步重试次数"未配置时的默认值。
+CARD_RETRY_DEFAULT = 2
 
 
 class Collector(SkillExecutionMixin):
@@ -103,19 +73,16 @@ class Collector(SkillExecutionMixin):
         state = self.progress.load()
         if state.depleted_today or state.daily_submaps >= DAILY_SUBMAP_LIMIT:
             return CollectionResult(True, depleted=True, message="今日采集技能额度已用尽")
-        supported_cards = tuple(
-            card
-            for card in COLLECTABLE_CARDS
-            if card.number not in UNSUPPORTED_COLLECTION_CARD_NUMBERS
-        )
-        if all(state.card_verified(card.card_id) for card in supported_cards):
+        if state.weekly_collection_complete:
             return CollectionResult(
                 True,
                 message="本周已支持剧情卡带均已采集并完成视觉复核",
             )
 
         completed_this_run = 0
-        card_retries = max(1, int(self.task.config.get("卡带单步重试次数", 2)))
+        card_retries = max(
+            1, int(self.task.config.get("卡带单步重试次数", CARD_RETRY_DEFAULT))
+        )
         for card in COLLECTABLE_CARDS:
             if card.number in UNSUPPORTED_COLLECTION_CARD_NUMBERS:
                 self._status("跳过", f"{card.card_id}：第14章等待专用流程")

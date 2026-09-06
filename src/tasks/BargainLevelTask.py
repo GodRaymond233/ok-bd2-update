@@ -4,7 +4,7 @@ from qfluentwidgets import FluentIcon
 
 from src.tasks.BaseBD2Task import BaseBD2Task
 from src.utils.calibration import FHD_1080
-from src.utils.ocr_utils import keyword_match_count, normalize_ocr_text
+from src.utils.ocr_utils import keyword_match_count
 
 REFERENCE_WIDTH = FHD_1080.width
 REFERENCE_HEIGHT = FHD_1080.height
@@ -205,7 +205,3 @@ class BargainLevelTask(BaseBD2Task):
     @staticmethod
     def _keyword_match_count(text: str, keywords: list[str]) -> int:
         return keyword_match_count(text, keywords, alnum_only=True)
-
-    @staticmethod
-    def _normalize_text(text: str) -> str:
-        return normalize_ocr_text(text, alnum_only=True)

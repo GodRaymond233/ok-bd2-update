@@ -15,6 +15,9 @@ PREVIEW_ASPECT_WIDTH = 16
 PREVIEW_ASPECT_HEIGHT = 9
 TOP_ROW_MAX_HEIGHT = 240
 CAPTURE_LIST_MAX_HEIGHT = 180
+
+# 带子控件的顶部容器（截图/交互预览）比纯列表额外多出的高度。
+TOP_CARD_CONTENT_EXTRA_HEIGHT = 58
 TOP_CARD_CONTENT_HEIGHT = CAPTURE_LIST_MAX_HEIGHT
 CAPTURE_TIMEOUT_SECONDS = 2.0
 
@@ -335,8 +338,8 @@ def install_live_screenshot(start_tab) -> None:
     for attr in ("device_container", "capture_container", "interaction_container"):
         container = getattr(start_tab, attr, None)
         if container is not None:
-            container.setMinimumHeight(TOP_CARD_CONTENT_HEIGHT + 58)
-            container.setMaximumHeight(TOP_CARD_CONTENT_HEIGHT + 58)
+            container.setMinimumHeight(TOP_CARD_CONTENT_HEIGHT + TOP_CARD_CONTENT_EXTRA_HEIGHT)
+            container.setMaximumHeight(TOP_CARD_CONTENT_HEIGHT + TOP_CARD_CONTENT_EXTRA_HEIGHT)
             container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
     capture_list = getattr(start_tab, "capture_list", None)

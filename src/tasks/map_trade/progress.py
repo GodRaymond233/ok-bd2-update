@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
+from src.tasks.map_trade.collector_constants import UNSUPPORTED_COLLECTION_CARD_NUMBERS
 from src.tasks.map_trade.data import SHOP_PURCHASE_REFERENCES
 from src.tasks.map_trade.models import (
     COLLECTABLE_CARDS,
@@ -94,10 +95,6 @@ class ProgressState:
     @property
     def weekly_collection_complete(self) -> bool:
         """Whether every currently supported weekly card is complete and verified."""
-        from src.tasks.map_trade.collector_constants import (
-            UNSUPPORTED_COLLECTION_CARD_NUMBERS,
-        )
-
         supported = (
             card
             for card in COLLECTABLE_CARDS
@@ -561,20 +558,6 @@ class ProgressStore:
 
         return self._effective_used(action)
 
-    def uncovered_reservations(self, action: str | None = None) -> int:
-        records = self._require_state().action_records.values()
-        action_name = self._action_name(action) if action is not None else None
-        return sum(
-            1
-            for record in records
-            if bool(record.get("reservation", False))
-            and not bool(record.get("covered", False))
-            and (
-                action_name is None
-                or str(record.get("action", "")) == action_name
-            )
-        )
-
     def pending_action_records(self) -> tuple[dict[str, object], ...]:
         state = self._require_state()
         return tuple(
@@ -1032,14 +1015,10 @@ class ProgressStore:
             )
             if record is None:
                 return False
+            # BLOCKED/VOID 不在 accepted_states 中，已由状态检查排除，无需重复黑名单。
             if (
                 str(record.get("state", "")) not in accepted_states
                 or not bool(record.get("local_done", False))
-                or str(record.get("state", ""))
-                in {
-                    CollectionActionState.BLOCKED.value,
-                    CollectionActionState.VOID.value,
-                }
             ):
                 return False
         return True

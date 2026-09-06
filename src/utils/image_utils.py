@@ -5,6 +5,8 @@ from statistics import fmean, median
 import cv2
 import numpy as np
 
+from src.utils.calibration import FHD_1080
+
 
 def green_mask_from_template(
     template: np.ndarray,
@@ -212,7 +214,7 @@ def stabilize_template_match(
             )
 
         frame_height, frame_width = last_shape[:2]
-        client_scale = min(frame_width / 1920, frame_height / 1080)
+        client_scale = min(frame_width / FHD_1080.width, frame_height / FHD_1080.height)
         consensus = stable_match_consensus(
             observations,
             sample_count=len(window),

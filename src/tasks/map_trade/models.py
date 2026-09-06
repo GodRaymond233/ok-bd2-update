@@ -4,7 +4,12 @@ from dataclasses import dataclass
 from enum import Enum
 
 from src.utils.calibration import HD_720
-from src.utils.vision_models import MatchResult, TemplateSpec  # noqa: F401
+from src.utils.vision_models import MatchResult, TemplateSpec
+
+__all__ = [
+    "MatchResult",
+    "TemplateSpec",
+]
 
 # map_trade vision coordinates are calibrated at 1280×720 and converted to
 # the live client resolution at runtime.
@@ -13,7 +18,6 @@ DAILY_ABSORB_LIMIT = 21
 DAILY_SUMMON_LIMIT = 21
 DAILY_SUPPRESS_LIMIT = 60
 DAILY_SUBMAP_LIMIT = DAILY_ABSORB_LIMIT
-SUBMAPS_PER_CARD = 3
 MERCHANT_CARD_ID = "Q_sp6"
 PINNED_CARD_IDS = frozenset({"Q_sp6", "Q_sp18", "Q_sp20"})
 

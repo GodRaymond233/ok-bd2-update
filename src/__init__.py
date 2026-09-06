@@ -1,8 +1,6 @@
 import os
 
 from src.game_path import (
-    get_configured_game_path,
-    get_configured_install_dir,
     get_game_exe_config_value,
     get_launcher_exe_config_value,
 )
@@ -23,21 +21,6 @@ def _ensure_system32_in_path() -> None:
 _ensure_system32_in_path()
 
 GAME_NAME = "BD2"
-GAME_INSTALL_DIR = get_configured_install_dir()
 GAME_EXE = get_game_exe_config_value()
-GAME_PATH = get_configured_game_path()
 LAUNCHER_EXE = get_launcher_exe_config_value()
 HWND_CLASS = os.environ.get("OK_BD2_HWND_CLASS", "UnityWndClass")
-LAUNCHER_HWND_CLASS = os.environ.get("OK_BD2_LAUNCHER_HWND_CLASS", "")
-
-text_white_color = {
-    "r": (244, 255),
-    "g": (244, 255),
-    "b": (244, 255),
-}
-
-text_black_color = {
-    "r": (0, 50),
-    "g": (0, 50),
-    "b": (0, 50),
-}

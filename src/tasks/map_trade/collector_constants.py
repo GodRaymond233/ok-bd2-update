@@ -92,7 +92,6 @@ ACTION_FAILURE_FEEDBACK = {
 class SkillAction:
     name: str
     icon: ActionIconSpec
-    count_roi: tuple[int, int, int, int] | None = None
     fixed_count_relative_roi: tuple[float, float, float, float] | None = None
 
     @property

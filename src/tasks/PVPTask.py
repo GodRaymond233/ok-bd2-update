@@ -36,7 +36,6 @@ from src.utils.home_confirmation import (
 )
 from src.utils.image_utils import (
     reference_roi_frame,
-    relative_roi_frame,
     stabilize_template_match,
 )
 from src.utils.ocr_utils import normalize_ocr_text
@@ -47,25 +46,40 @@ HD720_REFERENCE_WIDTH = HD_720.width
 HD720_REFERENCE_HEIGHT = HD_720.height
 ENTRY_REFERENCE_WIDTH = QHD_1440.width
 ENTRY_REFERENCE_HEIGHT = QHD_1440.height
-FREE_AP_SWITCH_SCREEN_ROI = (1680, 535, 120, 55)
-PVP_RESULT_SCREEN_ROI = (932, 368, 699, 704)
-PVP_RESULT_CLOSE_SCREEN_POINT = (1585, 410)
-PVP_FAILURE_LEAVE_REFERENCE_ROI = (696, 952, 535, 87)
-PVP_SUCCESS_LEAVE_REFERENCE_ROI = (1594, 987, 240, 66)
+# 参考系约定：*_SCREEN_* 常量与 *_CLICK_REFERENCE 由 _click_screen_reference /
+# _screen_reference_* 按 2560×1440（QHD_1440）归一；带 OCR_REFERENCE_ROI 且经
+# _mf_roi 消费的常量是 1280×720（HD_720）参考；其余 *_REFERENCE_* 为 1920×1080。
+FREE_AP_SWITCH_SCREEN_ROI = (1680, 535, 120, 55)  # 2560×1440 参考
+PVP_RESULT_SCREEN_ROI = (932, 368, 699, 704)  # 2560×1440 参考
+PVP_RESULT_CLOSE_SCREEN_POINT = (1585, 410)  # 2560×1440 参考
+PVP_FAILURE_LEAVE_REFERENCE_ROI = (696, 952, 535, 87)  # 1920×1080 参考
+PVP_SUCCESS_LEAVE_REFERENCE_ROI = (1594, 987, 240, 66)  # 1920×1080 参考
 # The PVP hub uses the same top-right sandbox home entry as the validated
 # chapter-sandbox calibration.  The old (100, 54) point hovered the applied-
 # effects status icon instead of leaving the hub.
-PVP_BACK_HOME_REFERENCE_POINT = (1797, 63)
-PVP_HUB_NOTICE_SCREEN_ROI = (1381, 865, 62, 45)
+PVP_BACK_HOME_REFERENCE_POINT = (1797, 63)  # 1920×1080 参考
+PVP_HUB_NOTICE_SCREEN_ROI = (1381, 865, 62, 45)  # 2560×1440 参考
 PVP_CARTRIDGE_SLOT_POINT = (152 / REFERENCE_WIDTH, 970 / REFERENCE_HEIGHT)
 PVP_AUTO_BATTLE_SCREEN_ROI = (1470, 910, 170, 150)
 # Reference ROI for the multiplier value in the main auto-battle popup. The value
 # sits directly left of the settings gear (reference x ≈ 868 at 1280x720); the ROI
 # must exclude the gear, otherwise the OCR det box merges it into the value and the
 # anchored ^N$ match fails on artifacts such as "1倍a".
-PVP_MULTIPLIER_OCR_REFERENCE_ROI = (800, 213, 65, 33)
-PVP_AUTO_BATTLE_CLICK_REFERENCE = (2026, 1291)
-PVP_STAGE_CLICK_REFERENCE_OFFSET = (0, -75)
+PVP_MULTIPLIER_OCR_REFERENCE_ROI = (800, 213, 65, 33)  # 1280×720 参考
+PVP_AUTO_BATTLE_CLICK_REFERENCE = (2026, 1291)  # 2560×1440 参考
+PVP_STAGE_CLICK_REFERENCE_OFFSET = (0, -75)  # 1920×1080 参考位移
+PVP_BATTLE_START_SCREEN_POINT = (1381, 1061)  # 2560×1440 参考
+PVP_FREE_AP_SWITCH_SCREEN_POINT = (1732, 557)  # 2560×1440 参考
+PVP_MULTIPLIER_BUTTON_SCREEN_POINT = (1719, 465)  # 2560×1440 参考
+PVP_MULTIPLIER_40_OPTION_SCREEN_POINT = (1584, 715)  # 2560×1440 参考
+PVP_MULTIPLIER_1_OPTION_SCREEN_POINT = (980, 712)  # 2560×1440 参考
+PVP_MULTIPLIER_PLUS_SCREEN_POINT = (1657, 850)  # 2560×1440 参考
+PVP_MULTIPLIER_CONFIRM_SCREEN_POINT = (1383, 1007)  # 2560×1440 参考
+PVP_MAX_BATTLE_COUNT_SCREEN_POINT = (1650, 850)  # 2560×1440 参考
+PVP_AUTO_BATTLE_MENU_OCR_REFERENCE_ROI = (327, 165, 417, 156)  # 1280×720 参考
+PVP_BATTLE_ONGOING_OCR_REFERENCE_ROI = (50, 576, 203, 69)  # 1280×720 参考
+PVP_MULTIPLIER_SETTING_OCR_REFERENCE_ROI = (451, 101, 379, 184)  # 1280×720 参考
+PVP_MULTIPLIER_SETTING_VALUE_OCR_REFERENCE_ROI = (596, 372, 105, 50)  # 1280×720 参考
 PVP_RESULT_BASE_MINUTES = 20.0
 PVP_RESULT_CLOSE_AFTER_SECONDS = 1.5
 PVP_BATTLE_ONGOING_PATTERN = r"正在进行"
@@ -73,6 +87,9 @@ PVP_AP_SHORTAGE_PATTERN = r"不足"
 PVP_SEASON_REWARD_AFTER_CLICK_SECONDS = 3.0
 PVP_RANK_PAGE_AFTER_CLICK_SECONDS = 2.0
 PVP_AUTO_BATTLE_MENU_VERIFY_SECONDS = 3.5
+# BUG-20260906-01：网络波动会整枪吞掉点击，自动战斗弹窗内可验证的单发点击
+# 统一按该次数做"点击→确认→失败重试"兜底；确认窗口见各调用点。
+PVP_CLICK_VERIFY_ATTEMPTS = 3
 # A real promotion flow shows the confirm text while the page is still fading
 # in. Waiting for a fresh frame avoids clicking a stale/transient OCR result.
 PVP_RANK_CONFIRM_SETTLE_SECONDS = 1.5
@@ -93,8 +110,8 @@ class PVPTask(BaseBD2Task):
         "状态",
         "当前阶段",
         "目标倍率",
-        "主页小屋按钮",
-        "主页亮度",
+        "主页抽抽乐 OCR 尝试",
+        "主页亮度p95",
         "主页抽抽乐 OCR",
         "快速切换按钮",
         "卡带选择页 OCR",
@@ -536,12 +553,12 @@ class PVPTask(BaseBD2Task):
             self._save_flow_diagnostic("pvp_auto_battle_failed")
             return "failed"
 
-        menu_roi = self._mf_roi(327, 165, 417, 156)
+        menu_roi = self._mf_roi(*PVP_AUTO_BATTLE_MENU_OCR_REFERENCE_ROI)
         # 2026-09 客户端改版把按钮热区收到图标/背板上（RPT-20260905-201103），
-        # OCR 标签中心点击不再打开弹窗；先点校准图标位，未验证到弹窗再兜底标签中心。
-        found_menu = False
-        menu_text = ""
-        for click_label, click in (
+        # OCR 标签中心点击不再打开弹窗；先点校准图标位，未验证到弹窗再兜底
+        # 标签中心。BUG-20260906-01：网络波动会整枪吞掉点击，两级各一枪仍
+        # 可能全被吞，按 PVP_CLICK_VERIFY_ATTEMPTS 轮流用两种落点重试。
+        auto_battle_clicks = (
             (
                 "图标校准点",
                 lambda: self._click_screen_reference(
@@ -558,11 +575,21 @@ class PVPTask(BaseBD2Task):
                     after_sleep=1.0,
                 ),
             ),
-        ):
+        )
+        found_menu = False
+        menu_text = ""
+        for attempt in range(1, PVP_CLICK_VERIFY_ATTEMPTS + 1):
+            click_label, click = auto_battle_clicks[
+                (attempt - 1) % len(auto_battle_clicks)
+            ]
             clicked = click()
             self.info_set(
                 "PVP 自动战斗点击",
-                click_label if clicked else f"{click_label}（不可用）",
+                (
+                    f"第{attempt}次{click_label}"
+                    if clicked
+                    else f"第{attempt}次{click_label}（不可用）"
+                ),
             )
             found_menu, menu_text = self._wait_for_ocr_patterns(
                 [r"鲜血鸡尾酒"],
@@ -572,9 +599,14 @@ class PVPTask(BaseBD2Task):
             )
             if found_menu:
                 break
+            if attempt < PVP_CLICK_VERIFY_ATTEMPTS:
+                self.log_info(
+                    f"镜中之战：第{attempt}/{PVP_CLICK_VERIFY_ATTEMPTS}次点击"
+                    "自动战斗后未确认菜单，重试。"
+                )
         self.info_set("PVP 自动战斗 OCR", menu_text or "-")
         if not found_menu:
-            self.log_info("镜中之战：两级点击后自动战斗菜单仍未出现。")
+            self.log_info("镜中之战：多次点击后自动战斗菜单仍未出现。")
             self._save_flow_diagnostic("pvp_auto_battle_failed")
             return "failed"
 
@@ -586,7 +618,7 @@ class PVPTask(BaseBD2Task):
 
         self.info_set("当前阶段", "点击战斗开始")
         self.info_set("PVP 开始战斗 OCR", "跳过前置 OCR，按固定比例点击")
-        self._click_screen_reference(1381, 1061, after_sleep=2.0)
+        self._click_screen_reference(*PVP_BATTLE_START_SCREEN_POINT, after_sleep=2.0)
         return self._wait_battle_start_or_ap_shortage(multiplier)
 
     def _wait_battle_start_or_ap_shortage(self, multiplier: int) -> str:
@@ -598,7 +630,7 @@ class PVPTask(BaseBD2Task):
                 battle_text = self._ocr_text(
                     frame,
                     name="PVP 战斗中",
-                    roi=self._mf_roi(50, 576, 203, 69),
+                    roi=self._mf_roi(*PVP_BATTLE_ONGOING_OCR_REFERENCE_ROI),
                 )
                 if self._matches_any(battle_text, [PVP_BATTLE_ONGOING_PATTERN]):
                     self.info_set("PVP 战斗中 OCR", battle_text)
@@ -621,14 +653,21 @@ class PVPTask(BaseBD2Task):
 
     def _ensure_free_ap_enabled(self) -> bool:
         self.info_set("当前阶段", "确认仅用免费鸡尾酒")
-        if self._free_ap_switch_on():
-            self.info_set("PVP 免费AP", "已开启")
-            return True
+        # BUG-20260906-01：开关点击被网络吞掉时状态不会翻转，确认失败重试点击。
+        for attempt in range(1, PVP_CLICK_VERIFY_ATTEMPTS + 1):
+            if self._free_ap_switch_on():
+                self.info_set("PVP 免费AP", "已开启")
+                return True
 
-        self._click_screen_reference(1732, 557, after_sleep=1.0)
-        if self._free_ap_switch_on():
-            self.info_set("PVP 免费AP", "已开启")
-            return True
+            self._click_screen_reference(
+                *PVP_FREE_AP_SWITCH_SCREEN_POINT,
+                after_sleep=1.0,
+            )
+            if attempt < PVP_CLICK_VERIFY_ATTEMPTS:
+                self.log_info(
+                    f"镜中之战：免费AP开关第{attempt}/"
+                    f"{PVP_CLICK_VERIFY_ATTEMPTS}次点击后未确认开启，重试。"
+                )
 
         self.info_set("PVP 免费AP", "未确认")
         self.log_info("镜中之战：未能确认仅用免费鸡尾酒开关。")
@@ -656,38 +695,101 @@ class PVPTask(BaseBD2Task):
         if self._multiplier_matches(multiplier):
             return True
 
-        self._click_screen_reference(1719, 465, after_sleep=0.8)
-        if not self._wait_for_ocr_patterns(
-            [r"设置.*鲜血鸡尾酒.*消耗量|鲜血鸡尾酒.*消耗量"],
-            timeout=8.0,
-            name="PVP 倍率设置",
-            roi=self._mf_roi(451, 101, 379, 184),
-        )[0]:
-            self.log_info("镜中之战：未能打开倍率设置。")
+        if not self._open_multiplier_setting():
+            return False
+        if not self._select_setting_multiplier(multiplier):
             return False
 
-        if multiplier == 40:
-            self._click_screen_reference(1584, 715, after_sleep=0.5)
+        return self._confirm_setting_multiplier(multiplier)
+
+    def _open_multiplier_setting(self) -> bool:
+        # BUG-20260906-01：倍率按钮点击被网络吞掉时设置弹窗不会出现，重试点击。
+        for attempt in range(1, PVP_CLICK_VERIFY_ATTEMPTS + 1):
+            self._click_screen_reference(
+                *PVP_MULTIPLIER_BUTTON_SCREEN_POINT,
+                after_sleep=0.8,
+            )
+            found, _text = self._wait_for_ocr_patterns(
+                [r"设置.*鲜血鸡尾酒.*消耗量|鲜血鸡尾酒.*消耗量"],
+                timeout=8.0,
+                name="PVP 倍率设置",
+                roi=self._mf_roi(*PVP_MULTIPLIER_SETTING_OCR_REFERENCE_ROI),
+            )
+            if found:
+                return True
+            self.log_info(
+                f"镜中之战：第{attempt}/{PVP_CLICK_VERIFY_ATTEMPTS}次点击倍率"
+                "按钮后未打开设置弹窗"
+                + ("，重试。" if attempt < PVP_CLICK_VERIFY_ATTEMPTS else "。")
+            )
+        self.log_info("镜中之战：未能打开倍率设置。")
+        return False
+
+    def _select_setting_multiplier(self, multiplier: int) -> bool:
+        # BUG-20260906-01：选项点击被吞时设置值不变，先重试点击同一选项直到
+        # 回读匹配（重复点击同一选项无副作用），再按原逻辑用加号步进到目标。
+        option_point = (
+            PVP_MULTIPLIER_40_OPTION_SCREEN_POINT
+            if multiplier == 40
+            else PVP_MULTIPLIER_1_OPTION_SCREEN_POINT
+        )
+        option_value = 40 if multiplier == 40 else 1
+        for attempt in range(1, PVP_CLICK_VERIFY_ATTEMPTS + 1):
+            self._click_screen_reference(*option_point, after_sleep=0.5)
+            if self._setting_multiplier_matches(option_value):
+                break
+            self.log_info(
+                f"镜中之战：倍率选项第{attempt}/{PVP_CLICK_VERIFY_ATTEMPTS}"
+                f"次点击后设置值未回读到 {option_value}"
+                + ("，重试。" if attempt < PVP_CLICK_VERIFY_ATTEMPTS else "。")
+            )
         else:
-            self._click_screen_reference(980, 712, after_sleep=0.5)
+            self.info_set("PVP 倍率 OCR", "未确认")
+            return False
 
         for _ in range(10):
             if self._setting_multiplier_matches(multiplier):
                 break
             if multiplier == 1:
                 break
-            self._click_screen_reference(1657, 850, after_sleep=0.5)
+            self._click_screen_reference(
+                *PVP_MULTIPLIER_PLUS_SCREEN_POINT,
+                after_sleep=0.5,
+            )
 
         if not self._setting_multiplier_matches(multiplier):
             self.info_set("PVP 倍率 OCR", "未确认")
             return False
+        return True
 
-        self._click_screen_reference(1383, 1007, after_sleep=1.0)
-        return self._multiplier_matches(multiplier, timeout=4.0)
+    def _confirm_setting_multiplier(self, multiplier: int) -> bool:
+        # BUG-20260906-01：确认点击被吞时设置弹窗不关、主弹窗回读不变；仅在
+        # 设置弹窗仍开着时重试确认，弹窗已关则不盲重试（避免误点主弹窗）。
+        for attempt in range(1, PVP_CLICK_VERIFY_ATTEMPTS + 1):
+            self._click_screen_reference(
+                *PVP_MULTIPLIER_CONFIRM_SCREEN_POINT,
+                after_sleep=1.0,
+            )
+            if self._multiplier_matches(multiplier, timeout=4.0):
+                return True
+            if attempt >= PVP_CLICK_VERIFY_ATTEMPTS:
+                break
+            dialog_open, _text = self._wait_for_ocr_patterns(
+                [r"设置.*鲜血鸡尾酒.*消耗量|鲜血鸡尾酒.*消耗量"],
+                timeout=1.0,
+                name="PVP 倍率设置",
+                roi=self._mf_roi(*PVP_MULTIPLIER_SETTING_OCR_REFERENCE_ROI),
+            )
+            if not dialog_open:
+                break
+            self.log_info(f"镜中之战：倍率确认第{attempt}次点击未生效，重试。")
+
+        self.info_set("PVP 倍率 OCR", "未确认")
+        return False
 
     def _select_max_battle_count(self) -> None:
         self.info_set("当前阶段", "选择最大战斗次数")
-        self._click_screen_reference(1650, 850, after_sleep=0.8)
+        self._click_screen_reference(*PVP_MAX_BATTLE_COUNT_SCREEN_POINT, after_sleep=0.8)
 
     def _multiplier_matches(self, multiplier: int, timeout: float = 2.0) -> bool:
         found, text = self._wait_for_ocr_patterns(
@@ -705,7 +807,7 @@ class PVPTask(BaseBD2Task):
             [rf"^{multiplier}$", rf"^{multiplier}倍$"],
             timeout=0.8,
             name="PVP 倍率设置值",
-            roi=self._mf_roi(596, 372, 105, 50),
+            roi=self._mf_roi(*PVP_MULTIPLIER_SETTING_VALUE_OCR_REFERENCE_ROI),
             normalize_multiplier=True,
         )
         self.info_set("PVP 倍率 OCR", text or "-")
@@ -721,7 +823,11 @@ class PVPTask(BaseBD2Task):
             name="PVP 结算",
             roi=self._screen_reference_roi_to_reference_roi(PVP_RESULT_SCREEN_ROI),
             extra_wait_patterns=[
-                (PVP_BATTLE_ONGOING_PATTERN, self._mf_roi(50, 576, 203, 69), "PVP 战斗中 OCR")
+                (
+                    PVP_BATTLE_ONGOING_PATTERN,
+                    self._mf_roi(*PVP_BATTLE_ONGOING_OCR_REFERENCE_ROI),
+                    "PVP 战斗中 OCR",
+                )
             ],
         )
         self.info_set("PVP 结算 OCR", result_text or "-")
@@ -890,22 +996,10 @@ class PVPTask(BaseBD2Task):
 
             break
 
+        # hub/leave/confirm 三种状态都在循环内返回，能到达这里只会是等待超时。
         self.info_set("PVP 升降级确认 OCR", text or "-")
-        if state != "confirm" or point is None:
-            self.info_set("PVP 返回主页", "未检测到 PVP 箱庭或升降级确认按钮")
-            return False
-
-        frame = self.capture_frame()
-        self.info_set(
-            "PVP 升降级确认",
-            f"OCR中心=({point[0]:.0f},{point[1]:.0f})",
-        )
-        self._click_frame_point(frame, point, after_sleep=1.0)
-        return self._wait_for_template(
-            PVP_MEDALS_TEMPLATE,
-            timeout=timeout,
-            name="PVP 箱庭",
-        )
+        self.info_set("PVP 返回主页", "未检测到 PVP 箱庭或升降级确认按钮")
+        return False
 
     def _wait_for_pvp_hub_or_confirm(
         self,
@@ -1093,32 +1187,6 @@ class PVPTask(BaseBD2Task):
             ):
                 return
 
-    def _try_pass_workaround(self) -> None:
-        self.log_info("镜中之战：快速卡带入场失败，尝试通行证路径兜底。")
-        self._click_reference(1063, 210, after_sleep=1.0)
-        if not self._wait_for_ocr_patterns(
-            [r"通行证"],
-            timeout=5.0,
-            name="PVP 通行证",
-            roi=(217, 14, 101, 49),
-        )[0]:
-            return
-
-        for _ in range(4):
-            frame = self.capture_frame()
-            text = self._ocr_text(frame, "pvp_pass_list", roi=(610, 151, 492, 362))
-            if self._matches_any(text, [r"镜中之战|PVP|战斗"]):
-                self._click_reference(1030, 320, after_sleep=2.0)
-                self._wait_loading_if_present("通行证进入 PVP")
-                return
-            frame_height, frame_width = frame.shape[:2]
-            self.drag_client(
-                (round(frame_width * 0.5), round(frame_height * 0.72)),
-                (round(frame_width * 0.5), round(frame_height * 0.35)),
-                duration=0.6,
-                after_sleep=1.0,
-            )
-
     def _click_template_until(
         self,
         spec: TemplateSpec,
@@ -1208,51 +1276,6 @@ class PVPTask(BaseBD2Task):
         self.info_set(name, f"{last_score:.3f}")
         return False
 
-    def _find_template_until(
-        self,
-        spec: TemplateSpec,
-        timeout: float,
-        name: str,
-        interval: float = 0.35,
-    ) -> tuple[MatchResult | None, tuple[int, int] | None]:
-        end_at = monotonic() + max(0.0, timeout)
-        last_score = -1.0
-        while monotonic() <= end_at:
-            frame = self.capture_frame()
-            result = self._match(frame, spec)
-            last_score = result.score
-            self.info_set(name, f"{result.score:.3f}")
-            if self._passes(result, spec):
-                frame_height, frame_width = frame.shape[:2]
-                return result, (frame_height, frame_width)
-            self.sleep(interval)
-
-        self.info_set(name, f"{last_score:.3f}")
-        return None, None
-
-    def _find_pvp_label_until(
-        self,
-        timeout: float,
-        name: str,
-        interval: float = 0.5,
-    ) -> tuple[tuple[int, int] | None, tuple[int, int] | None]:
-        end_at = monotonic() + max(0.0, timeout)
-        last_text = ""
-        while monotonic() <= end_at:
-            frame = self.capture_frame()
-            frame_height, frame_width = frame.shape[:2]
-            boxes = self._ocr_boxes(frame, name=name)
-            text = " ".join(getattr(box, "name", "") for box in boxes if getattr(box, "name", ""))
-            last_text = text or last_text
-            self.info_set(f"{name} OCR", text or "-")
-            point = self._pvp_label_click_point(boxes, frame_width, frame_height)
-            if point is not None:
-                return point, (frame_height, frame_width)
-            self.sleep(interval)
-
-        self.info_set(f"{name} OCR", last_text or "-")
-        return None, None
-
     def _wait_for_template(
         self,
         spec: TemplateSpec,
@@ -1332,49 +1355,6 @@ class PVPTask(BaseBD2Task):
                 if self._matches_any(extra_text, [pattern]):
                     self.info_set(info_key, extra_text)
                     break
-            self.sleep(interval)
-
-        return False, last_text
-
-    def _wait_for_ocr_requirements(
-        self,
-        requirements: list[tuple[str, float]],
-        timeout: float,
-        name: str,
-        roi: tuple[int, int, int, int] | None = None,
-        interval: float = 0.5,
-    ) -> tuple[bool, str]:
-        end_at = monotonic() + max(0.0, timeout)
-        last_text = ""
-        while monotonic() <= end_at:
-            frame = self.capture_frame()
-            entries = self._ocr_entries(frame, name=name, roi=roi)
-            text = " ".join(label for label, _confidence in entries)
-            last_text = text or last_text
-            self.info_set(f"{name} OCR", text or "-")
-            if self._ocr_requirements_met(entries, requirements):
-                return True, text
-            self.sleep(interval)
-
-        return False, last_text
-
-    def _wait_for_ocr_absent(
-        self,
-        patterns: list[str],
-        timeout: float,
-        name: str,
-        roi: tuple[int, int, int, int] | None = None,
-        interval: float = 0.5,
-    ) -> tuple[bool, str]:
-        end_at = monotonic() + max(0.0, timeout)
-        last_text = ""
-        while monotonic() <= end_at:
-            frame = self.capture_frame()
-            text = self._ocr_text(frame, name=name, roi=roi)
-            last_text = text or last_text
-            self.info_set(f"{name} OCR", text or "-")
-            if text and not self._matches_any(text, patterns):
-                return True, text
             self.sleep(interval)
 
         return False, last_text
@@ -1579,17 +1559,6 @@ class PVPTask(BaseBD2Task):
         right, bottom = PVPTask._mf_point(x + width, y + height)
         return left, top, max(1, right - left), max(1, bottom - top)
 
-    def _click_mf_reference(self, x: int, y: int, after_sleep: float = 0.0):
-        scaled_x, scaled_y = self._mf_point(x, y)
-        self._click_reference(scaled_x, scaled_y, after_sleep=after_sleep)
-
-    def _click_entry_reference(self, x: int, y: int, after_sleep: float = 0.0):
-        self.operate_click(
-            max(0.0, min(1.0, x / ENTRY_REFERENCE_WIDTH)),
-            max(0.0, min(1.0, y / ENTRY_REFERENCE_HEIGHT)),
-            after_sleep=after_sleep,
-        )
-
     def _click_screen_reference(self, x: int, y: int, after_sleep: float = 0.0):
         self.operate_click(
             max(0.0, min(1.0, x / ENTRY_REFERENCE_WIDTH)),
@@ -1635,58 +1604,8 @@ class PVPTask(BaseBD2Task):
             after_sleep=after_sleep,
         )
 
-    def _drag_entry_reference(
-        self,
-        start: tuple[int, int],
-        end: tuple[int, int],
-        duration: float = 0.7,
-        after_sleep: float = 0.0,
-    ) -> None:
-        frame = self.capture_frame()
-        frame_height, frame_width = frame.shape[:2]
-        start_client = (
-            round(frame_width * start[0] / ENTRY_REFERENCE_WIDTH),
-            round(frame_height * start[1] / ENTRY_REFERENCE_HEIGHT),
-        )
-        end_client = (
-            round(frame_width * end[0] / ENTRY_REFERENCE_WIDTH),
-            round(frame_height * end[1] / ENTRY_REFERENCE_HEIGHT),
-        )
-        self.drag_client(start_client, end_client, duration=duration, after_sleep=after_sleep)
-
     def _home_p95_threshold(self) -> float:
         return float(self.config.get("主页压暗阈值", HOME_DIMMED_P95_THRESHOLD_DEFAULT))
-
-    def _ocr_requirements_met(
-        self,
-        entries: list[tuple[str, float]],
-        requirements: list[tuple[str, float]],
-    ) -> bool:
-        combined_text = " ".join(label for label, _confidence in entries)
-        for pattern, min_confidence in requirements:
-            if not self._ocr_requirement_met(entries, combined_text, pattern, min_confidence):
-                return False
-        return True
-
-    def _ocr_requirement_met(
-        self,
-        entries: list[tuple[str, float]],
-        combined_text: str,
-        pattern: str,
-        min_confidence: float,
-    ) -> bool:
-        normalized_pattern = self._normalize_text(pattern)
-        for label, confidence in entries:
-            if re.search(normalized_pattern, self._normalize_text(label), flags=re.IGNORECASE):
-                return confidence >= min_confidence
-
-        if not re.search(
-            normalized_pattern,
-            self._normalize_text(combined_text),
-            flags=re.IGNORECASE,
-        ):
-            return False
-        return any(confidence >= min_confidence for _label, confidence in entries)
 
     @staticmethod
     def _matches_any(text: str, patterns: list[str]) -> bool:
@@ -1700,36 +1619,6 @@ class PVPTask(BaseBD2Task):
     @staticmethod
     def _ocr_pattern_match_count(text: str, patterns: list[str]) -> int:
         return sum(1 for pattern in patterns if PVPTask._matches_any(text, [pattern]))
-
-    @staticmethod
-    def _pvp_label_click_point(
-        boxes,
-        frame_width: int,
-        frame_height: int,
-    ) -> tuple[int, int] | None:
-        candidates = []
-        for box in boxes:
-            if PVPTask._normalize_text(getattr(box, "name", "")) != "pvp":
-                continue
-            x = getattr(box, "x", None)
-            y = getattr(box, "y", None)
-            width = getattr(box, "width", None)
-            height = getattr(box, "height", None)
-            if None in (x, y, width, height):
-                continue
-
-            center_x = int(round(float(x) + float(width) / 2))
-            center_y = int(round(float(y) + float(height) / 2))
-            if center_y < frame_height * 0.50:
-                continue
-            candidates.append((center_x, center_y, float(x)))
-
-        if not candidates:
-            return None
-
-        center_x, center_y, _left = min(candidates, key=lambda item: item[2])
-        click_y = int(round(center_y - frame_height * 0.085))
-        return center_x, max(0, click_y)
 
     _normalize_text = staticmethod(normalize_ocr_text)
 
@@ -1752,8 +1641,6 @@ class PVPTask(BaseBD2Task):
         roi: tuple[int, int, int, int] | None,
     ) -> tuple[int, int, np.ndarray]:
         return reference_roi_frame(frame, roi, (REFERENCE_WIDTH, REFERENCE_HEIGHT))
-
-    _relative_roi_frame = staticmethod(relative_roi_frame)
 
     @staticmethod
     def _crop_reference(frame, roi: tuple[int, int, int, int] | None):
@@ -1792,7 +1679,12 @@ QUICK_PACK_TEMPLATE = TemplateSpec(
     green_mask=True,
     scale_ratios=(0.95, 0.975, 1.0, 1.025, 1.05),
     min_pixel_score=0.85,
-    candidate_center_roi=(650 / 1920, 950 / 1080, 1050 / 1920, 1045 / 1080),
+    candidate_center_roi=(
+        650 / FHD_1080.width,
+        950 / FHD_1080.height,
+        1050 / FHD_1080.width,
+        1045 / FHD_1080.height,
+    ),
     minimum_safe_threshold=0.88,
     # 与 SquareGoddessTask.QUICK_SWITCH_TEMPLATE 同一按钮：梦幻广场内暗色
     # 圆底样式在 1600x901 实机帧 zncc 最高 0.838（RPT-20260902-225925），

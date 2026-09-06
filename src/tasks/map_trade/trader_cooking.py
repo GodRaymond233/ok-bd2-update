@@ -89,6 +89,11 @@ COOKING_TEXT_CHARACTER_COVERAGE = 0.75
 COOKING_PAGE_TIMEOUT = 10.0
 COOKING_START_TIMEOUT = 6.0
 COOKING_COMPLETION_TIMEOUT = 40.0
+# 切换技能组2后等待 UI 稳定、点击制作料理技能的识别窗口、
+# 以及点击数量选项后的停顿。
+COOKING_SKILL_GROUP_SWITCH_SETTLE_SECONDS = 0.5
+COOKING_ICON_CLICK_TIMEOUT = 6.0
+COOKING_QUANTITY_CLICK_SETTLE_SECONDS = 0.25
 COOKING_EXIT_TIMEOUT = 12.0
 COOKING_POLL_INTERVAL = 0.25
 
@@ -251,10 +256,10 @@ class CookingFlowMixin:
 
         self._status("料理状态", "切换技能组2")
         self.task.operate_click(*COOKING_SKILL_GROUP_POINT, after_sleep=0.0)
-        self.task.sleep(0.5)
+        self.task.sleep(COOKING_SKILL_GROUP_SWITCH_SETTLE_SECONDS)
         if not self.vision.click_stable_template(
             COOKING_ICON.template,
-            timeout=6.0,
+            timeout=COOKING_ICON_CLICK_TIMEOUT,
             after_sleep=0.0,
         ):
             self.task.log_warning("料理：技能组2中未稳定识别到制作料理技能。")
@@ -487,7 +492,7 @@ class CookingFlowMixin:
             center = (round(x + width / 2), round(y + height / 2))
             self._status(f"料理-{recipe}数量点击中心", f"{choice}: center={center}")
             self.vision.click_client(center, detail.frame.shape, after_sleep=0.0)
-            self.task.sleep(0.25)
+            self.task.sleep(COOKING_QUANTITY_CLICK_SETTLE_SECONDS)
             return True
         return False
 

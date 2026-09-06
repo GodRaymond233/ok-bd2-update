@@ -244,8 +244,6 @@ class RunPanel(QFrame):
             " border-radius: 11px; padding: 2px 10px; font-size: 11px; font-weight: 700;"
         )
 
-    _pill_kind = None
-
     # ---------------- ops ----------------
 
     def _toggle_pause(self):

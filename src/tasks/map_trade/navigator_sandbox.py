@@ -29,65 +29,19 @@ from src.tasks.map_trade.models import (
     ScreenState,
     TemplateSpec,
 )
-from src.tasks.map_trade.navigator_constants import (  # noqa: F401
+from src.tasks.map_trade.navigator_constants import (
     AREA_MAP_BACK_TEMPLATE,
     AREA_MAP_CHANGE_INTERVAL,
     AREA_MAP_CHANGE_TIMEOUT,
     AREA_MAP_CLICK_SETTLE_SECONDS,
-    AREA_MAP_OPEN_REFERENCE_POINT,
-    AREA_MAP_OPEN_RELATIVE_POINT,
-    AREA_MAP_REFERENCE_SIZE,
-    AREA_MAP_SCAN_LIMIT,
     AREA_MAP_TELEPORT_BRIGHT_MAXIMUM_SPREAD,
     AREA_MAP_TELEPORT_BRIGHT_MINIMUM_GRAY,
     AREA_MAP_TELEPORT_BRIGHT_NEUTRAL_RATIO,
     AREA_MAP_TELEPORT_BRIGHT_RADIUS_RATIO,
     AREA_MAP_TELEPORT_CLUSTER_RADIUS,
-    BARGAIN_CONFIRM_POINT,
-    BARGAIN_POINT,
-    BARGAIN_SHOP_CONFIRM_POPUP_KEYWORD,
-    BARGAIN_SHOP_CONFIRM_STABLE_HITS,
-    CHAPTER_HOME_POINT,
-    DISCOUNT_SHOP_CLOSE_DIALOG_REGION,
-    DISCOUNT_SHOP_CLOSE_KEYWORDS,
-    DISCOUNT_SHOP_CLOSE_POINT,
-    DISCOUNT_SHOP_CLOSE_TIMEOUT,
-    FIRST_CARD_CONFIRM_REGION,
-    FIRST_CARD_INSERT_REGION,
-    FIRST_CARD_SKIP_TEMPLATE,
     HAND_TEMPLATE,
-    LOADING_TEMPLATE,
     MAP_PAGE_MODE_STABLE_HITS,
-    MERCHANT_CLICK_LOCATION_FAILURE_MESSAGE,
-    MERCHANT_CLICK_LOCATION_TEMPLATE,
-    MERCHANT_DIALOG_CONFIRM_TIMEOUT,
     OVERLAP_ARROW_TEMPLATE,
-    PROBE_QUICK_SWITCH_SCROLL_AMOUNT,
-    PROBE_QUICK_SWITCH_SCROLL_COUNT,
-    PROBE_QUICK_SWITCH_SCROLL_INTERVAL_SECONDS,
-    PROBE_QUICK_SWITCH_SCROLL_POINT,
-    PROBE_QUICK_SWITCH_SCROLL_SETTLE_SECONDS,
-    PROBE_QUICK_SWITCH_SCROLL_STEPS,
-    PROBE_STORY_BADGE_CONFIRM_SECONDS,
-    Q_SP6_BARGAIN_OCR_TIMEOUT,
-    Q_SP6_BARGAIN_RECHECK_DELAY,
-    Q_SP6_SHOP_PAGE_KEYWORDS,
-    Q_SP6_SHOP_PAGE_OCR_INTERVAL,
-    Q_SP6_SHOP_PRIORITY_TIMEOUT,
-    Q_SP6_STORY_NUMBER,
-    QUICK_SWITCH_CARTRIDGE_REGION,
-    QUICK_SWITCH_PAGE_KEYWORDS,
-    QUICK_SWITCH_SCROLL_FOCUS_POINT,
-    QUICK_SWITCH_SCROLL_INTERVAL,
-    QUICK_SWITCH_SCROLL_POINT,
-    QUICK_SWITCH_SCROLL_RESET_AMOUNT,
-    QUICK_SWITCH_SCROLL_RESET_COUNT,
-    QUICK_SWITCH_SCROLL_SCAN_STEPS,
-    QUICK_SWITCH_SCROLL_SETTLE_SECONDS,
-    QUICK_SWITCH_SCROLL_UP_AMOUNT,
-    QUICK_SWITCH_SCROLL_UP_COUNT,
-    QUICK_SWITCH_TEMPLATE,
-    RETURN_HOME_TIMEOUT,
     SANDBOX_CONFIRM_ACTION_TEMPLATES,
     SANDBOX_EMPTY_SLOT_TEMPLATES,
     SANDBOX_INTERACTION_PROBE_INTERVAL,
@@ -102,93 +56,50 @@ from src.tasks.map_trade.navigator_constants import (  # noqa: F401
     SANDBOX_MAP_EVIDENCE_MIN_ZNCC,
     SANDBOX_MAP_SETTLE_SECONDS,
     SANDBOX_MAP_TELEPORT_TEMPLATE,
-    SANDBOX_MAP_TELEPORT_TIMEOUT,
     SANDBOX_NAVIGATION_CONFIRM_TIMEOUT,
     SANDBOX_NAVIGATION_MAP_TIMEOUT,
     SANDBOX_NAVIGATION_OCR_INTERVAL,
     SANDBOX_NAVIGATION_OPEN_SETTLE_SECONDS,
     SANDBOX_NAVIGATION_OPEN_TEMPLATES,
     SANDBOX_NAVIGATION_OPEN_TIMEOUT,
-    SANDBOX_NAVIGATION_PIN_TEMPLATE,
-    SANDBOX_NAVIGATION_RUN_TEMPLATE,
     SANDBOX_NAVIGATION_TELEPORT_SETTLE_SECONDS,
     SANDBOX_NAVIGATION_WALK_TIMEOUT,
     SANDBOX_SKILL_ACTION_ICONS,
-    SANDBOX_SKILL_GROUP_PIXEL_SCORE,
-    SANDBOX_SKILL_GROUP_SCALE_RATIOS,
-    SANDBOX_SKILL_GROUP_SEARCH_ROI,
     SANDBOX_SKILL_GROUP_SWITCH_SETTLE_SECONDS,
-    SANDBOX_SKILL_GROUP_TEMPLATE_SCORE,
-    SANDBOX_SKILL_GROUP_ZNCC_SCORE,
     SANDBOX_SKILL_SELECTED_YELLOW_MIN_RATIO,
-    SANDBOX_SKILL_SLOT_1_CENTER_ROI,
     SANDBOX_SKILL_SLOT_1_REFERENCE_CENTER,
     SANDBOX_SKILL_SLOT_1_RELATIVE_POINT,
     SANDBOX_SKILL_SLOT_1_SELECTED_TEMPLATE,
     SANDBOX_SKILL_SLOT_1_UNSELECTED_TEMPLATE,
-    SANDBOX_SKILL_SLOT_2_CENTER_ROI,
-    SANDBOX_SKILL_SLOT_2_REFERENCE_CENTER,
     SANDBOX_SKILL_SLOT_2_SELECTED_TEMPLATE,
     SANDBOX_SKILL_SLOT_2_UNSELECTED_TEMPLATE,
     SANDBOX_SKILL_STATE_TEMPLATES,
     SANDBOX_SKILL_UNSELECTED_YELLOW_MAX_RATIO,
     SANDBOX_TELEPORT_SKILL_FAILURE_GROUPS,
     SANDBOX_TELEPORT_SKILL_POLL_INTERVAL,
-    SANDBOX_TELEPORT_SKILL_REFERENCE_CENTER,
-    SANDBOX_TELEPORT_SKILL_RELATIVE_POINT,
     SANDBOX_TELEPORT_SKILL_TEMPLATE,
     SANDBOX_TELEPORT_SKILL_TIMEOUT,
     SANDBOX_TEMPLATES,
-    SHOP_PAGE_OCR_KEYWORDS,
-    STORY_BADGE_CANDIDATE_PIXEL_SCORE,
-    STORY_BADGE_CANDIDATE_SCORE,
-    STORY_BADGE_CANDIDATE_ZNCC_SCORE,
-    STORY_BADGE_CENTER_REGION,
-    STORY_BADGE_CLUSTER_RADIUS,
-    STORY_BADGE_MIN_MARGIN,
-    STORY_BADGE_OCR_BINARY_THRESHOLD,
-    STORY_BADGE_OCR_HORIZONTAL_BORDER,
-    STORY_BADGE_OCR_INNER_HEIGHT,
-    STORY_BADGE_OCR_INNER_RADIUS_RATIO,
-    STORY_BADGE_OCR_MIN_CONFIDENCE,
-    STORY_BADGE_OCR_VERTICAL_BORDER,
-    STORY_BADGE_PIXEL_SCORE,
-    STORY_BADGE_SPECS,
-    STORY_BADGE_TEMPLATE_SCORE,
-    STORY_CATEGORY_HIGHLIGHT_MIN_RATIO,
-    STORY_CATEGORY_HIGHLIGHT_REGION,
-    STORY_CATEGORY_POINT,
     STORY_SANDBOX_STABLE_HITS,
     STORY_SANDBOX_SWITCH_WINDOW,
     STORY_SANDBOX_SWITCH_WINDOW_HITS,
     TELEPORT_GENERATION_OCR_INTERVAL,
-    TELEPORT_GENERATION_OCR_KEYWORDS,
     TELEPORT_GENERATION_OCR_TIMEOUT,
     TELEPORT_INTERACTION_CLICK_DELAY,
-    TELEPORT_INTERACTION_POLL_INTERVAL,
-    TELEPORT_INTERACTION_TIMEOUT,
     TELEPORT_MAP_BACKWARD_TEMPLATE,
     TELEPORT_MAP_FIRST_PAGE_LIMIT,
     TELEPORT_MAP_FORWARD_TEMPLATE,
     TELEPORT_MAP_OPEN_TIMEOUT,
     TELEPORT_MAP_RETURN_REFERENCE_POINT,
     TELEPORT_MAP_RETURN_RELATIVE_POINT,
-    TELEPORT_MAP_SKILL_TEMPLATE,
-    TELEPORT_MAP_TELEPORT_CIRCLE_TEMPLATE,
     TELEPORT_MAP_TELEPORT_CIRCLE_TEMPLATES,
-    TELEPORT_MAP_TITLE_OCR_REFERENCE_ROI,
     TELEPORT_MAP_TITLE_OCR_RELATIVE_ROI,
     TELEPORT_MAP_TRAVEL_SETTLE_SECONDS,
-    TRADE_MERCHANT_CONTEXT_TEMPLATE,
     AreaMapContext,
-    LocatedStoryCard,
-    ProbedStoryCard,
     SandboxConfirmation,
-    StoryBadgeCandidate,
-    StoryBadgeDetection,
-    _sandbox_skill_template,
 )
 from src.tasks.map_trade.vision import normalize_text
+from src.utils.calibration import FHD_1080
 
 
 class SandboxNavigationMixin:
@@ -902,14 +813,6 @@ class SandboxNavigationMixin:
             success_message="已稳定确认剧情卡带箱庭",
             failure_message="未稳定确认当前剧情卡带箱庭",
         )
-
-    def ensure_sandbox(self, card_id: str | None = None) -> NavigationResult:
-        if card_id is not None:
-            return self.select_card(card_id)
-        state = self.classify()
-        if state == ScreenState.SANDBOX:
-            return self._wait_for_current_sandbox(timeout=self._loading_timeout())
-        return self.ensure_card_menu()
 
     @staticmethod
     def _sandbox_teleport_skill_failure_matches(text: str) -> bool:
@@ -1713,7 +1616,10 @@ class SandboxNavigationMixin:
         height, width = frame.shape[:2]
         cluster_radius = max(
             6,
-            round(AREA_MAP_TELEPORT_CLUSTER_RADIUS * min(width / 1920, height / 1080)),
+            round(
+                AREA_MAP_TELEPORT_CLUSTER_RADIUS
+                * min(width / FHD_1080.width, height / FHD_1080.height)
+            ),
         )
         candidates: list[MatchResult] = []
         for spec in templates:
@@ -2111,83 +2017,6 @@ class SandboxNavigationMixin:
         )
         return self._wait_for_area_map_change(card, context)
 
-    def _scan_area_map_direction(
-        self,
-        card: CardSpec,
-        target: CollectionMapTarget,
-        context: AreaMapContext,
-        direction: str,
-    ) -> tuple[AreaMapContext, bool, bool]:
-        current = context
-        moved = False
-        visited = {current.normalized_text}
-        for _step in range(AREA_MAP_SCAN_LIMIT):
-            if current.resolved_target_key == target.key:
-                return current, moved, False
-            arrow = current.right_arrow if direction == "right" else current.left_arrow
-            if arrow is None:
-                return current, moved, False
-            changed = self._move_area_map(card, current, direction)
-            if changed is None or changed.normalized_text in visited:
-                return current, moved, True
-            current = changed
-            moved = True
-            visited.add(current.normalized_text)
-            if len(current.candidate_target_keys) > 1:
-                return current, moved, True
-        return current, moved, True
-
-    def _locate_collection_target(
-        self,
-        card: CardSpec,
-        target: CollectionMapTarget,
-        initial: AreaMapContext,
-    ) -> tuple[AreaMapContext | None, bool, str]:
-        if not initial.is_area_map:
-            return None, False, "未在同一帧确认移动魔法阵区域地图"
-        if len(initial.candidate_target_keys) > 1:
-            return None, False, "当前地图标题同时命中多个目标"
-        if initial.resolved_target_key == target.key:
-            return initial, False, ""
-
-        current, moved_right, failed = self._scan_area_map_direction(
-            card,
-            target,
-            initial,
-            "right",
-        )
-        if current.resolved_target_key == target.key:
-            return current, moved_right, ""
-        if failed:
-            return None, moved_right, "向右翻页后未确认页面变化或出现标题歧义"
-
-        current, moved_left, failed = self._scan_area_map_direction(
-            card,
-            target,
-            current,
-            "left",
-        )
-        if current.resolved_target_key == target.key:
-            return current, moved_right or moved_left, ""
-        if failed:
-            return None, moved_right or moved_left, "向左复位时未确认页面变化或出现标题歧义"
-
-        current, moved_again, failed = self._scan_area_map_direction(
-            card,
-            target,
-            current,
-            "right",
-        )
-        if current.resolved_target_key == target.key:
-            return current, moved_right or moved_left or moved_again, ""
-        if failed:
-            return None, True, "从最左页扫描时未确认页面变化或出现标题歧义"
-        return (
-            None,
-            moved_right or moved_left or moved_again,
-            (f"到达区域图边界仍未找到{target.title}"),
-        )
-
     def _close_area_map(self, context: AreaMapContext) -> NavigationResult:
         if not context.map_page_mode.is_teleport_map:
             return NavigationResult(
@@ -2234,112 +2063,4 @@ class SandboxNavigationMixin:
             True,
             ScreenState.SANDBOX,
             f"{card.card_id}/{target.key}/{target.title}",
-        )
-
-    def _click_collection_teleport(
-        self,
-        card: CardSpec,
-        target: CollectionMapTarget,
-        context: AreaMapContext,
-    ) -> NavigationResult:
-        if not context.map_page_mode.is_teleport_map:
-            return NavigationResult(
-                False,
-                self._screen_state_for_map_page_mode(context.map_page_mode),
-                f"页面模式{context.map_page_mode.value}不允许传送点击",
-                map_page_mode=context.map_page_mode,
-            )
-        if not context.teleports and context.overlap_arrow is not None:
-            self.vision.click_client(
-                context.overlap_arrow.center,
-                context.frame_shape,
-                after_sleep=AREA_MAP_CLICK_SETTLE_SECONDS,
-            )
-            expanded = self._capture_area_map_context(card)
-            if (
-                expanded.resolved_target_key != target.key
-                or expanded.map_page_mode != context.map_page_mode
-            ):
-                return NavigationResult(
-                    False,
-                    ScreenState.AREA_MAP,
-                    "展开传送阵后目标地图标题发生变化",
-                )
-            context = expanded
-        teleport = self._select_map_teleport(context.teleports)
-        if teleport is None:
-            return NavigationResult(
-                False,
-                ScreenState.AREA_MAP,
-                f"{target.title}未识别到传送阵，无法安全传送",
-            )
-
-        if not self._click_teleport_map_destination(
-            teleport,
-            context.frame_shape,
-            page_mode=context.map_page_mode,
-        ):
-            return NavigationResult(
-                False,
-                ScreenState.AREA_MAP,
-                (
-                    f"传送到{target.title}前未可靠确认生成魔法阵弹窗"
-                    if context.map_page_mode == MapPageMode.GENERATE_TELEPORT
-                    else f"传送到{target.title}前未完成传送阵地图传送"
-                ),
-            )
-        arrived = self._wait_for_story_sandbox(
-            card.number,
-            timeout=8.0 + self._loading_timeout(),
-        )
-        if not arrived.success:
-            return NavigationResult(
-                False,
-                arrived.state,
-                f"传送到{target.title}后未确认剧情箱庭：{arrived.message}",
-            )
-        return self._confirm_collection_arrival(card, target)
-
-    def enter_collection_map(
-        self,
-        card_id: str,
-        target: CollectionMapTarget,
-    ) -> NavigationResult:
-        card = CARD_BY_ID.get(card_id)
-        if card is None or target.key not in {value.key for value in card.targets}:
-            return NavigationResult(
-                False,
-                ScreenState.UNKNOWN,
-                f"未知采集目标：{card_id}/{target.key}",
-            )
-        area = self.ensure_area_map()
-        if not area.success:
-            return area
-        initial = self._capture_area_map_context(card)
-        if initial.map_page_mode != area.map_page_mode:
-            return NavigationResult(
-                False,
-                ScreenState.AREA_MAP,
-                (
-                    "区域地图确认前后页面模式不一致："
-                    f"opened={area.map_page_mode.value}, current={initial.map_page_mode.value}"
-                ),
-                map_page_mode=initial.map_page_mode,
-            )
-        located, moved, reason = self._locate_collection_target(card, target, initial)
-        if located is None:
-            return NavigationResult(False, ScreenState.AREA_MAP, reason)
-        if not moved:
-            closed = self._close_area_map(located)
-            if not closed.success:
-                return closed
-            return NavigationResult(
-                True,
-                ScreenState.SANDBOX,
-                f"{card.card_id}/{target.key}/{target.title}",
-            )
-        return self._click_collection_teleport(
-            card,
-            target,
-            located,
         )

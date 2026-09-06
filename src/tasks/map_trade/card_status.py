@@ -12,6 +12,7 @@ from src.tasks.map_trade.models import (
     TemplateSpec,
 )
 from src.tasks.map_trade.vision import Vision
+from src.utils.calibration import FHD_1080
 
 CARD_ICON_LEFT_OFFSET = -15
 CARD_ICON_RIGHT_OFFSET = 165
@@ -150,8 +151,8 @@ def card_icon_region(
     """Return the full card-width icon strip relative to one numeric badge."""
 
     height, width = frame_shape[:2]
-    scale_x = width / 1920
-    scale_y = height / 1080
+    scale_x = width / FHD_1080.width
+    scale_y = height / FHD_1080.height
     center_x, center_y = badge_center
     left = round(center_x + CARD_ICON_LEFT_OFFSET * scale_x)
     right = round(center_x + CARD_ICON_RIGHT_OFFSET * scale_x)
@@ -219,7 +220,7 @@ class CardStatusDetector:
             roi=None,
             relative_roi=relative_roi,
         )
-        client_scale = min(width / 1920, height / 1080)
+        client_scale = min(width / FHD_1080.width, height / FHD_1080.height)
         matches = self.vision.match_all(
             frame,
             search_spec,

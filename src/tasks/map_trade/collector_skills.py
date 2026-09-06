@@ -12,12 +12,10 @@ from src.tasks.map_trade.action_icons import (
     ActionIconSpec,
     ActionIconState,
 )
-from src.tasks.map_trade.collector_constants import (  # noqa: F401
-    ABSORB_ACTION,
+from src.tasks.map_trade.collector_constants import (
     ACTION_AFTER_CLICK_SECONDS,
     ACTION_FAILURE_FEEDBACK,
     ACTION_FEEDBACK_CHARACTER_RATIO,
-    ACTION_FEEDBACK_REFERENCE_ROI,
     ACTION_FEEDBACK_RELATIVE_ROI,
     ACTION_FEEDBACK_SUCCESS_DELAY_SECONDS,
     ACTION_FEEDBACK_TIMEOUT,
@@ -26,32 +24,20 @@ from src.tasks.map_trade.collector_constants import (  # noqa: F401
     ACTION_OCR_WINDOW_INTERVAL,
     ACTION_OCR_WINDOW_SAMPLES,
     ACTION_SUCCESS_FEEDBACK,
-    BATTLE_ACTIONS,
     SEARCH_ACTION,
     SEARCH_COUNTDOWN_INTERVAL,
     SEARCH_COUNTDOWN_PATTERN,
-    SEARCH_COUNTDOWN_REFERENCE_ROI,
     SEARCH_COUNTDOWN_RELATIVE_ROI,
     SEARCH_COUNTDOWN_TIMEOUT,
-    SKILL_FAILURE_EVIDENCE_LIMIT,
     SKILL_FAILURE_TEXT_LIMIT,
-    SKILL_FIXED_COUNT_REFERENCE_ROIS,
-    SKILL_FIXED_COUNT_RELATIVE_ROIS,
-    SKILL_GROUP_REFERENCE_POINTS,
     SKILL_GROUP_RELATIVE_POINTS,
     SKILL_GROUP_SWITCH_SETTLE_SECONDS,
     SKILL_OCR_FALLBACK_UPSCALE,
     SKILL_OCR_UPSCALE,
-    SKILL_REFERENCE_SIZE,
-    SUMMON_ACTION,
-    SUPPRESS_ACTION,
-    UNSUPPORTED_COLLECTION_CARD_NUMBERS,
     SearchCountdownSession,
     SkillAction,
     SkillExecutionResult,
     SkillFeedbackObservation,
-    _relative_reference_point,
-    _relative_reference_roi,
 )
 from src.tasks.map_trade.models import CollectionMapRole, MatchResult
 from src.tasks.map_trade.vision import parse_used_limit
@@ -148,12 +134,11 @@ class SkillExecutionMixin:
         self,
         icon: ActionIconSpec,
         *,
-        require_used_stable: bool = False,
         require_stable: bool = False,
     ) -> tuple[object, ActionIconDetection]:
         """Capture a short window so a transient HUD frame cannot cause a miss."""
 
-        stable_required = require_stable or require_used_stable
+        stable_required = require_stable
         best_frame = None
         best_detection = None
         previous_detection = None
@@ -197,9 +182,7 @@ class SkillExecutionMixin:
                 else:
                     previous_detection = None
                 if attempt + 1 < ACTION_ICON_DETECTION_SAMPLES:
-                    sleeper = getattr(self.task, "sleep", None)
-                    if callable(sleeper):
-                        sleeper(ACTION_ICON_DETECTION_INTERVAL)
+                    self.task.sleep(ACTION_ICON_DETECTION_INTERVAL)
                 continue
             if detection.state not in {
                 ActionIconState.ABSENT,
@@ -207,9 +190,7 @@ class SkillExecutionMixin:
             }:
                 return frame, detection
             if attempt + 1 < ACTION_ICON_DETECTION_SAMPLES:
-                sleeper = getattr(self.task, "sleep", None)
-                if callable(sleeper):
-                    sleeper(ACTION_ICON_DETECTION_INTERVAL)
+                self.task.sleep(ACTION_ICON_DETECTION_INTERVAL)
         if best_detection is None:
             best_detection = ActionIconDetection(
                 ActionIconState.ABSENT,
@@ -983,7 +964,6 @@ class SkillExecutionMixin:
             if feedback_success:
                 self._status("吸收成功反馈待标定", feedback.text)
         if icon_used and feedback_success:
-            pending = after is None
             # A valid absolute snapshot is settled immediately; any
             # dim/bare/invalid post OCR remains a durable pending action.
             trusted_post = post_window_stable or exact_single_increment
@@ -1167,13 +1147,7 @@ class SkillExecutionMixin:
         )
         for index, scale in enumerate(scales):
             frame = self.vision.capture()
-            if action.count_roi is not None:
-                text = self.vision.ocr_text(
-                    frame,
-                    f"{action.name}次数",
-                    roi=action.count_roi,
-                )
-            elif action.fixed_count_relative_roi is not None:
+            if action.fixed_count_relative_roi is not None:
                 text = self.vision.ocr_text(
                     frame,
                     f"{action.name}次数",

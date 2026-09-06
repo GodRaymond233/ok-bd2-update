@@ -3,33 +3,34 @@ from typing import Callable
 
 import numpy as np
 
+from src.utils.calibration import FHD_1080
 from src.utils.image_utils import relative_roi_frame, to_gray
 from src.utils.ocr_utils import normalize_ocr_text
 
 HOME_GACHA_OCR_REFERENCE_ROI = (110, 993, 95, 54)
 HOME_GACHA_OCR_RELATIVE_ROI = (
-    110 / 1920,
-    993 / 1080,
-    205 / 1920,
-    1047 / 1080,
+    110 / FHD_1080.width,
+    993 / FHD_1080.height,
+    205 / FHD_1080.width,
+    1047 / FHD_1080.height,
 )
 HOME_GACHA_OCR_KEYWORD = "抽抽乐"
 HOME_GACHA_OCR_SCALES = (1.0, 2.0, 3.0)
 HOME_GACHA_OCR_ALIASES = (HOME_GACHA_OCR_KEYWORD,)
 HOME_ANNOUNCEMENT_CLEAR_REFERENCE_POINT = (169, 615)
 HOME_ANNOUNCEMENT_CLEAR_RELATIVE_POINT = (
-    HOME_ANNOUNCEMENT_CLEAR_REFERENCE_POINT[0] / 1920,
-    HOME_ANNOUNCEMENT_CLEAR_REFERENCE_POINT[1] / 1080,
+    HOME_ANNOUNCEMENT_CLEAR_REFERENCE_POINT[0] / FHD_1080.width,
+    HOME_ANNOUNCEMENT_CLEAR_REFERENCE_POINT[1] / FHD_1080.height,
 )
 
 # 左上图标列整列大 ROI（我的小屋/格鲁TALK/街机游戏）。检测模型需要上下文，
 # 禁止单独拆出单标签小 ROI（实测丢字/返回空）。来源：BUG-20260829-01 实测标定。
 HOME_LEFT_COLUMN_OCR_REFERENCE_ROI = (110, 165, 430, 155)
 HOME_LEFT_COLUMN_OCR_RELATIVE_ROI = (
-    110 / 1920,
-    165 / 1080,
-    540 / 1920,
-    320 / 1080,
+    110 / FHD_1080.width,
+    165 / FHD_1080.height,
+    540 / FHD_1080.width,
+    320 / FHD_1080.height,
 )
 # 每组关键词为简体（OCR 只识别简体中文，2026-08-29 取消繁体识别别名）；
 # 子串命中即该组计 1 票。

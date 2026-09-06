@@ -138,12 +138,6 @@ def mix(base: str, tint: str, t: float) -> str:
     )
 
 
-def seal_qss(color: str, ring_soft: str | None = None) -> str:
-    """Round status dot; ``ring_soft`` adds the running-state halo."""
-    halo = f" border: 3px solid {ring_soft};" if ring_soft else " border: none;"
-    return f"background-color: {color};{halo} border-radius: 4px;"
-
-
 def _hex_rgb(color: str) -> tuple[int, int, int]:
     value = color.lstrip("#")
     return int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)

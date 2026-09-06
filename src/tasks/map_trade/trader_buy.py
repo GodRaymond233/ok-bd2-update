@@ -11,7 +11,7 @@ from src.tasks.map_trade.calendar import (
 from src.tasks.map_trade.models import (
     ScreenState,
 )
-from src.tasks.map_trade.trader_constants import (  # noqa: F401
+from src.tasks.map_trade.trader_constants import (
     BUY_ALL_FAVORITES_INTERVAL,
     BUY_ALL_FAVORITES_KEYWORD,
     BUY_ALL_FAVORITES_STABLE_HITS,
@@ -29,64 +29,13 @@ from src.tasks.map_trade.trader_constants import (  # noqa: F401
     BUY_TO_SELL_SOLD_OUT_STABLE_HITS,
     BUY_TO_SELL_SOLD_OUT_TEMPLATE,
     BUY_TO_SELL_TIMEOUT,
-    CALENDAR_DIR,
-    COOK_SUBMENU_TEMPLATE,
-    PROJECT_ROOT,
-    SALE_AVAILABLE_PATTERN,
-    SALE_CLOSE_POINT,
-    SALE_COMPLETION_INTERVAL,
-    SALE_COMPLETION_STABLE_HITS,
-    SALE_COMPLETION_TIMEOUT,
-    SALE_CONFIRM_POINT,
-    SALE_DIALOG_REGION,
-    SALE_DIALOG_TIMEOUT,
-    SALE_DIALOG_TITLE_REGION,
-    SALE_FULL_PAGE_OCR_TARGET_HEIGHT,
-    SALE_MAX_POINT,
-    SALE_MIN_POINT,
-    SALE_OCR_INTERVAL,
-    SALE_OWNED_PATTERN,
-    SALE_PLUS_TEN_POINT,
-    SALE_SLIDER_REGION,
-    SALE_TOAST_ID_PATTERN,
     SELL_MODE_POINT,
-    SHOP_CARTRIDGE_CANDIDATE_SCORE,
-    SHOP_CARTRIDGE_CATEGORY_PATTERN,
-    SHOP_CARTRIDGE_CATEGORY_PREFIX,
-    SHOP_CARTRIDGE_CONFIRM_SCORE,
-    SHOP_CARTRIDGE_MIN_MARGIN,
-    SHOP_CARTRIDGE_NAME_MIN_SIMILARITY,
-    SHOP_CARTRIDGE_OCR_MIN_CONFIDENCE,
-    SHOP_CARTRIDGE_OCR_ROW_LINK_RADIUS,
-    SHOP_CARTRIDGE_RECOGNITION_REGION,
-    SHOP_CARTRIDGE_ROW_CLUSTER_RADIUS,
-    SHOP_CARTRIDGE_SCALE_RATIOS,
-    SHOP_CARTRIDGE_SCROLL_POINT,
-    SHOP_CARTRIDGE_SCROLL_REGION,
-    SHOP_DOWN_SCROLL_INTERVAL,
-    SHOP_FIRST_PAGE_MAX_UP_SCROLLS,
-    SHOP_MODE_INTERVAL,
-    SHOP_MODE_TIMEOUT,
     SHOP_MODE_TITLE_REGION,
-    SHOP_UP_SCROLL_RECOGNITION_INTERVAL,
-    STAR_ADD_TOAST_KEYWORD,
-    STAR_PIXEL_THRESHOLD,
-    STAR_POST_CLICK_DELAY,
-    STAR_REMOVE_TOAST_KEYWORD,
-    STAR_ROI_HALF_SIZE_X,
-    STAR_ROI_HALF_SIZE_Y,
-    STAR_TEMPLATE_FILE,
-    STAR_TEMPLATE_THRESHOLD,
-    STAR_VERIFY_ATTEMPTS,
-    STAR_VERIFY_INTERVAL,
-    SaleItemCandidate,
-    ShopCartridgeDetection,
-    ShopCartridgeOcrRow,
-    ShopCartridgeOcrText,
-    ShopCartridgeTemplateCandidate,
-    split_items,
 )
 from src.tasks.map_trade.vision import normalize_text
+
+# 点击"购买全部收藏"后等待确认弹窗出现前的停顿。
+BUY_ALL_FAVORITES_CLICK_AFTER_SLEEP = 0.3
 
 
 class BuyFlowMixin:
@@ -192,7 +141,9 @@ class BuyFlowMixin:
             "一键购买全部收藏按钮点击中心",
             f"center=({button_center[0]},{button_center[1]})",
         )
-        self.vision.click_client(button_center, frame.shape, after_sleep=0.3)
+        self.vision.click_client(
+            button_center, frame.shape, after_sleep=BUY_ALL_FAVORITES_CLICK_AFTER_SLEEP
+        )
         if not self._wait_for_purchase_confirmation():
             self.task.log_warning(
                 "买：点击一键购买全部收藏后，未同时识别到确认标题和询问文字。"

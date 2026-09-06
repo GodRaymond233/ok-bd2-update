@@ -2,26 +2,28 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from src.utils.calibration import FHD_1080
+
 # User-calibrated favorite-button centers. The source listed each point label below
 # its coordinates, so the entries are reordered here by point number. Keep these as
 # ratios derived from the supplied 1920x1080 reference points so runtime clicks scale
 # with the game client. The shop currently has 15 favorite-button positions.
 SHOP_FAVORITE_POINTS: dict[int, tuple[float, float]] = {
-    1: (580 / 1920, 140 / 1080),
-    2: (913 / 1920, 141 / 1080),
-    3: (1244 / 1920, 140 / 1080),
-    4: (1576 / 1920, 140 / 1080),
-    5: (581 / 1920, 250 / 1080),
-    6: (912 / 1920, 251 / 1080),
-    7: (1244 / 1920, 250 / 1080),
-    8: (1575 / 1920, 250 / 1080),
-    9: (580 / 1920, 359 / 1080),
-    10: (912 / 1920, 362 / 1080),
-    11: (1243 / 1920, 360 / 1080),
-    12: (1576 / 1920, 360 / 1080),
-    13: (580 / 1920, 469 / 1080),
-    14: (913 / 1920, 470 / 1080),
-    15: (1244 / 1920, 471 / 1080),
+    1: (580 / FHD_1080.width, 140 / FHD_1080.height),
+    2: (913 / FHD_1080.width, 141 / FHD_1080.height),
+    3: (1244 / FHD_1080.width, 140 / FHD_1080.height),
+    4: (1576 / FHD_1080.width, 140 / FHD_1080.height),
+    5: (581 / FHD_1080.width, 250 / FHD_1080.height),
+    6: (912 / FHD_1080.width, 251 / FHD_1080.height),
+    7: (1244 / FHD_1080.width, 250 / FHD_1080.height),
+    8: (1575 / FHD_1080.width, 250 / FHD_1080.height),
+    9: (580 / FHD_1080.width, 359 / FHD_1080.height),
+    10: (912 / FHD_1080.width, 362 / FHD_1080.height),
+    11: (1243 / FHD_1080.width, 360 / FHD_1080.height),
+    12: (1576 / FHD_1080.width, 360 / FHD_1080.height),
+    13: (580 / FHD_1080.width, 469 / FHD_1080.height),
+    14: (913 / FHD_1080.width, 470 / FHD_1080.height),
+    15: (1244 / FHD_1080.width, 471 / FHD_1080.height),
 }
 
 # Gray-star positions that must remain unfavorited for each cartridge. Keys use
@@ -95,7 +97,6 @@ class ShopCartridgeBrightnessCalibration:
     normal_template: str
     unselected_template: str
     foreground_min_gray: int
-    normal_reference_ratio: float
     unselected_reference_ratio: float
     selected_brightness_threshold: float
 
@@ -175,7 +176,6 @@ SHOP_CARTRIDGE_BRIGHTNESS = ShopCartridgeBrightnessCalibration(
     normal_template="shop/cartridges/story_cartridge_01.png",
     unselected_template="shop/cartridges/story_cartridge_01_dimmed.png",
     foreground_min_gray=50,
-    normal_reference_ratio=1.0,
     unselected_reference_ratio=0.50,
     selected_brightness_threshold=0.75,
 )

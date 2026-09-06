@@ -77,6 +77,8 @@ STAGGER_OFFSET_PX = 28
 # qfluentwidgets delegate draws a static 3px accent bar on the selected row;
 # this replaces it with a widget that slides between rows like the sidebar.
 SELECTION_IN_MS = 200
+# 选区条相对行高的内缩比例：条高比行高矮一圈并上下居中。
+SELECTION_BAR_INSET_RATIO = 0.257
 SELECTION_BAR_WIDTH = 3
 
 # Refresh-paced driving (see _RefreshDriver).
@@ -139,10 +141,6 @@ def set_fluent_motion_enabled(flag: bool) -> None:
                     selection.set_active(True)
                 except RuntimeError:
                     pass
-
-
-def fluent_motion_enabled() -> bool:
-    return _enabled
 
 
 def _page_offset_px(page: QWidget) -> int:
@@ -495,7 +493,7 @@ class _SlidingSelection(QObject):
             self._stop_slide()
             self._bar.hide()
             return
-        inset = round(0.257 * rect.height())
+        inset = round(SELECTION_BAR_INSET_RATIO * rect.height())
         geometry = QRect(
             0,
             rect.y() + inset,

@@ -9,8 +9,18 @@ from src.utils.calibration import FHD_1080, reference_rect_to_relative_roi
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CALENDAR_DIR = PROJECT_ROOT / "assets" / "map_trade"
-SHOP_CARTRIDGE_SCROLL_REGION = (228 / 1920, 117 / 1080, 463 / 1920, 959 / 1080)
-SHOP_CARTRIDGE_RECOGNITION_REGION = (200 / 1920, 70 / 1080, 500 / 1920, 1.0)
+SHOP_CARTRIDGE_SCROLL_REGION = (
+    228 / FHD_1080.width,
+    117 / FHD_1080.height,
+    463 / FHD_1080.width,
+    959 / FHD_1080.height,
+)
+SHOP_CARTRIDGE_RECOGNITION_REGION = (
+    200 / FHD_1080.width,
+    70 / FHD_1080.height,
+    500 / FHD_1080.width,
+    1.0,
+)
 SHOP_CARTRIDGE_SCROLL_POINT = (
     (SHOP_CARTRIDGE_SCROLL_REGION[0] + SHOP_CARTRIDGE_SCROLL_REGION[2]) / 2,
     (SHOP_CARTRIDGE_SCROLL_REGION[1] + SHOP_CARTRIDGE_SCROLL_REGION[3]) / 2,
@@ -58,12 +68,12 @@ BUY_ALL_FAVORITES_STABLE_HITS = 2
 BUY_ALL_FAVORITES_TIMEOUT = 30.0
 BUY_ALL_FAVORITES_INTERVAL = 0.25
 BUY_CONFIRM_DIALOG_REGION = (
-    701 / 1920,
-    328 / 1080,
-    1219 / 1920,
-    753 / 1080,
+    701 / FHD_1080.width,
+    328 / FHD_1080.height,
+    1219 / FHD_1080.width,
+    753 / FHD_1080.height,
 )
-BUY_CONFIRM_POINT = (1045 / 1920, 697 / 1080)
+BUY_CONFIRM_POINT = (1045 / FHD_1080.width, 697 / FHD_1080.height)
 BUY_CONFIRM_KEYWORDS = (
     "一键购买全部收藏",
     "是否购买所有加入收藏的商品",
@@ -79,7 +89,12 @@ BUY_TO_SELL_SOLD_OUT_TEMPLATE = TemplateSpec(
     min_pixel_score=0.93,
     min_zncc_score=0.84,
     minimum_safe_threshold=0.84,
-    relative_roi=(360 / 1920, 140 / 1080, 1620 / 1920, 510 / 1080),
+    relative_roi=(
+        360 / FHD_1080.width,
+        140 / FHD_1080.height,
+        1620 / FHD_1080.width,
+        510 / FHD_1080.height,
+    ),
 )
 BUY_TO_SELL_SOLD_OUT_STABLE_HITS = 2
 BUY_TO_SELL_TIMEOUT = 30.0
@@ -87,12 +102,12 @@ BUY_TO_SELL_INTERVAL = 0.25
 BUY_TO_SELL_PRE_CLICK_DELAY = 0.5
 BUY_TO_SELL_POST_CLICK_DELAY = 0.5
 SHOP_MODE_TITLE_REGION = (
-    226 / 1920,
-    24 / 1080,
-    359 / 1920,
-    80 / 1080,
+    226 / FHD_1080.width,
+    24 / FHD_1080.height,
+    359 / FHD_1080.width,
+    80 / FHD_1080.height,
 )
-SELL_MODE_POINT = (173 / 1920, 250 / 1080)
+SELL_MODE_POINT = (173 / FHD_1080.width, 250 / FHD_1080.height)
 SHOP_MODE_TIMEOUT = 4.0
 SHOP_MODE_INTERVAL = 0.25
 SHOP_MODE_SWITCH_MAX_CLICKS = 3
@@ -122,27 +137,27 @@ SALE_120_PERCENT_MARKER_MAX_RESULTS = 40
 SALE_120_PERCENT_MARKER_PEAK_RADIUS = 5
 SALE_MARKER_MIN_MARGIN = 0.03
 SALE_DIALOG_REGION = (
-    470 / 1920,
-    294 / 1080,
-    1450 / 1920,
-    785 / 1080,
+    470 / FHD_1080.width,
+    294 / FHD_1080.height,
+    1450 / FHD_1080.width,
+    785 / FHD_1080.height,
 )
-SALE_MIN_POINT = (677 / 1920, 721 / 1080)
-SALE_PLUS_TEN_POINT = (789 / 1920, 723 / 1080)
-SALE_MAX_POINT = (903 / 1920, 724 / 1080)
-SALE_CONFIRM_POINT = (1312 / 1920, 728 / 1080)
-SALE_CLOSE_POINT = (1420 / 1920, 323 / 1080)
+SALE_MIN_POINT = (677 / FHD_1080.width, 721 / FHD_1080.height)
+SALE_PLUS_TEN_POINT = (789 / FHD_1080.width, 723 / FHD_1080.height)
+SALE_MAX_POINT = (903 / FHD_1080.width, 724 / FHD_1080.height)
+SALE_CONFIRM_POINT = (1312 / FHD_1080.width, 728 / FHD_1080.height)
+SALE_CLOSE_POINT = (1420 / FHD_1080.width, 323 / FHD_1080.height)
 SALE_SLIDER_REGION = (
-    552 / 1920,
-    647 / 1080,
-    912 / 1920,
-    683 / 1080,
+    552 / FHD_1080.width,
+    647 / FHD_1080.height,
+    912 / FHD_1080.width,
+    683 / FHD_1080.height,
 )
 SALE_DIALOG_TITLE_REGION = (
-    495 / 1920,
-    310 / 1080,
-    795 / 1920,
-    390 / 1080,
+    495 / FHD_1080.width,
+    310 / FHD_1080.height,
+    795 / FHD_1080.width,
+    390 / FHD_1080.height,
 )
 SALE_DIALOG_TIMEOUT = 5.0
 SALE_OCR_INTERVAL = 0.25

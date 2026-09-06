@@ -3,26 +3,12 @@ from __future__ import annotations
 from time import monotonic
 
 from src.tasks.map_trade.models import (
-    MERCHANT_CARD_ID,
     MapPageMode,
     MatchResult,
     NavigationResult,
     ScreenState,
 )
-from src.tasks.map_trade.navigator_constants import (  # noqa: F401
-    AREA_MAP_BACK_TEMPLATE,
-    AREA_MAP_CHANGE_INTERVAL,
-    AREA_MAP_CHANGE_TIMEOUT,
-    AREA_MAP_CLICK_SETTLE_SECONDS,
-    AREA_MAP_OPEN_REFERENCE_POINT,
-    AREA_MAP_OPEN_RELATIVE_POINT,
-    AREA_MAP_REFERENCE_SIZE,
-    AREA_MAP_SCAN_LIMIT,
-    AREA_MAP_TELEPORT_BRIGHT_MAXIMUM_SPREAD,
-    AREA_MAP_TELEPORT_BRIGHT_MINIMUM_GRAY,
-    AREA_MAP_TELEPORT_BRIGHT_NEUTRAL_RATIO,
-    AREA_MAP_TELEPORT_BRIGHT_RADIUS_RATIO,
-    AREA_MAP_TELEPORT_CLUSTER_RADIUS,
+from src.tasks.map_trade.navigator_constants import (
     BARGAIN_CONFIRM_POINT,
     BARGAIN_POINT,
     BARGAIN_SHOP_CONFIRM_POPUP_KEYWORD,
@@ -35,18 +21,12 @@ from src.tasks.map_trade.navigator_constants import (  # noqa: F401
     DISCOUNT_SHOP_CLOSE_KEYWORDS,
     DISCOUNT_SHOP_CLOSE_POINT,
     DISCOUNT_SHOP_CLOSE_TIMEOUT,
-    FIRST_CARD_CONFIRM_REGION,
-    FIRST_CARD_INSERT_REGION,
-    FIRST_CARD_SKIP_TEMPLATE,
-    HAND_TEMPLATE,
-    LOADING_TEMPLATE,
     MERCHANT_AUTO_NAV_POLL_INTERVAL,
     MERCHANT_AUTO_NAV_START_TIMEOUT,
     MERCHANT_AUTO_NAV_TEMPLATE,
     MERCHANT_AUTO_NAV_TIMEOUT,
     MERCHANT_CLICK_LOCATION_FAILURE_MESSAGE,
     MERCHANT_CLICK_LOCATION_TEMPLATE,
-    MERCHANT_DIALOG_CONFIRM_TIMEOUT,
     MERCHANT_NAV_CONFIRM_OCR_ROI,
     MERCHANT_NAV_GUIDE_TEMPLATE,
     MERCHANT_NAV_GUIDE_TIMEOUT,
@@ -54,14 +34,6 @@ from src.tasks.map_trade.navigator_constants import (  # noqa: F401
     MERCHANT_NAV_MENU_OCR_INTERVAL,
     MERCHANT_NAV_MENU_OCR_ROI,
     MERCHANT_NAV_MENU_OCR_TIMEOUT,
-    OVERLAP_ARROW_TEMPLATE,
-    PROBE_QUICK_SWITCH_SCROLL_AMOUNT,
-    PROBE_QUICK_SWITCH_SCROLL_COUNT,
-    PROBE_QUICK_SWITCH_SCROLL_INTERVAL_SECONDS,
-    PROBE_QUICK_SWITCH_SCROLL_POINT,
-    PROBE_QUICK_SWITCH_SCROLL_SETTLE_SECONDS,
-    PROBE_QUICK_SWITCH_SCROLL_STEPS,
-    PROBE_STORY_BADGE_CONFIRM_SECONDS,
     Q_SP6_BARGAIN_CLICK_DELAY,
     Q_SP6_BARGAIN_OCR_TIMEOUT,
     Q_SP6_BARGAIN_RECHECK_DELAY,
@@ -69,113 +41,9 @@ from src.tasks.map_trade.navigator_constants import (  # noqa: F401
     Q_SP6_SHOP_PAGE_OCR_INTERVAL,
     Q_SP6_SHOP_PRIORITY_TIMEOUT,
     Q_SP6_STORY_NUMBER,
-    QUICK_SWITCH_CARTRIDGE_REGION,
-    QUICK_SWITCH_PAGE_KEYWORDS,
-    QUICK_SWITCH_SCROLL_FOCUS_POINT,
-    QUICK_SWITCH_SCROLL_INTERVAL,
-    QUICK_SWITCH_SCROLL_POINT,
-    QUICK_SWITCH_SCROLL_RESET_AMOUNT,
-    QUICK_SWITCH_SCROLL_RESET_COUNT,
-    QUICK_SWITCH_SCROLL_SCAN_STEPS,
-    QUICK_SWITCH_SCROLL_SETTLE_SECONDS,
-    QUICK_SWITCH_SCROLL_UP_AMOUNT,
-    QUICK_SWITCH_SCROLL_UP_COUNT,
-    QUICK_SWITCH_TEMPLATE,
     RETURN_HOME_TIMEOUT,
-    SANDBOX_CONFIRM_ACTION_TEMPLATES,
-    SANDBOX_INTERACTION_PROBE_INTERVAL,
-    SANDBOX_INTERACTION_PROBE_TIMEOUT,
-    SANDBOX_MAP_SETTLE_SECONDS,
-    SANDBOX_MAP_TELEPORT_TEMPLATE,
-    SANDBOX_MAP_TELEPORT_TIMEOUT,
-    SANDBOX_NAVIGATION_CONFIRM_TIMEOUT,
-    SANDBOX_NAVIGATION_MAP_TIMEOUT,
-    SANDBOX_NAVIGATION_OCR_INTERVAL,
-    SANDBOX_NAVIGATION_OPEN_SETTLE_SECONDS,
-    SANDBOX_NAVIGATION_OPEN_TEMPLATES,
-    SANDBOX_NAVIGATION_OPEN_TIMEOUT,
-    SANDBOX_NAVIGATION_PAGE_KEYWORDS,
-    SANDBOX_NAVIGATION_PIN_TEMPLATE,
-    SANDBOX_NAVIGATION_RUN_TEMPLATE,
-    SANDBOX_NAVIGATION_TELEPORT_SETTLE_SECONDS,
-    SANDBOX_NAVIGATION_WALK_TIMEOUT,
-    SANDBOX_SKILL_GROUP_PIXEL_SCORE,
-    SANDBOX_SKILL_GROUP_SCALE_RATIOS,
-    SANDBOX_SKILL_GROUP_SEARCH_ROI,
-    SANDBOX_SKILL_GROUP_SWITCH_SETTLE_SECONDS,
-    SANDBOX_SKILL_GROUP_TEMPLATE_SCORE,
-    SANDBOX_SKILL_GROUP_ZNCC_SCORE,
-    SANDBOX_SKILL_SELECTED_YELLOW_MIN_RATIO,
-    SANDBOX_SKILL_SLOT_1_CENTER_ROI,
-    SANDBOX_SKILL_SLOT_1_REFERENCE_CENTER,
-    SANDBOX_SKILL_SLOT_1_RELATIVE_POINT,
-    SANDBOX_SKILL_SLOT_1_SELECTED_TEMPLATE,
-    SANDBOX_SKILL_SLOT_1_UNSELECTED_TEMPLATE,
-    SANDBOX_SKILL_SLOT_2_CENTER_ROI,
-    SANDBOX_SKILL_SLOT_2_REFERENCE_CENTER,
-    SANDBOX_SKILL_SLOT_2_SELECTED_TEMPLATE,
-    SANDBOX_SKILL_SLOT_2_UNSELECTED_TEMPLATE,
-    SANDBOX_SKILL_STATE_TEMPLATES,
-    SANDBOX_SKILL_UNSELECTED_YELLOW_MAX_RATIO,
-    SANDBOX_TELEPORT_SKILL_FAILURE_GROUPS,
-    SANDBOX_TELEPORT_SKILL_POLL_INTERVAL,
-    SANDBOX_TELEPORT_SKILL_REFERENCE_CENTER,
-    SANDBOX_TELEPORT_SKILL_RELATIVE_POINT,
-    SANDBOX_TELEPORT_SKILL_TEMPLATE,
-    SANDBOX_TELEPORT_SKILL_TIMEOUT,
-    SANDBOX_TEMPLATES,
     SHOP_CLOSE_CLICK_INTERVAL,
     SHOP_CLOSE_CLICK_RETRIES,
-    SHOP_ENTRY_CLICK_INTERVAL,
-    SHOP_ENTRY_CLICK_RETRIES,
-    SHOP_PAGE_OCR_KEYWORDS,
-    STORY_BADGE_CANDIDATE_PIXEL_SCORE,
-    STORY_BADGE_CANDIDATE_SCORE,
-    STORY_BADGE_CANDIDATE_ZNCC_SCORE,
-    STORY_BADGE_CENTER_REGION,
-    STORY_BADGE_CLUSTER_RADIUS,
-    STORY_BADGE_MIN_MARGIN,
-    STORY_BADGE_OCR_BINARY_THRESHOLD,
-    STORY_BADGE_OCR_HORIZONTAL_BORDER,
-    STORY_BADGE_OCR_INNER_HEIGHT,
-    STORY_BADGE_OCR_INNER_RADIUS_RATIO,
-    STORY_BADGE_OCR_MIN_CONFIDENCE,
-    STORY_BADGE_OCR_VERTICAL_BORDER,
-    STORY_BADGE_PIXEL_SCORE,
-    STORY_BADGE_SPECS,
-    STORY_BADGE_TEMPLATE_SCORE,
-    STORY_CATEGORY_HIGHLIGHT_MIN_RATIO,
-    STORY_CATEGORY_HIGHLIGHT_REGION,
-    STORY_CATEGORY_POINT,
-    STORY_SANDBOX_STABLE_HITS,
-    STORY_SANDBOX_SWITCH_WINDOW,
-    STORY_SANDBOX_SWITCH_WINDOW_HITS,
-    TELEPORT_GENERATION_OCR_INTERVAL,
-    TELEPORT_GENERATION_OCR_KEYWORDS,
-    TELEPORT_GENERATION_OCR_TIMEOUT,
-    TELEPORT_INTERACTION_CLICK_DELAY,
-    TELEPORT_INTERACTION_POLL_INTERVAL,
-    TELEPORT_INTERACTION_TIMEOUT,
-    TELEPORT_MAP_BACKWARD_TEMPLATE,
-    TELEPORT_MAP_FIRST_PAGE_LIMIT,
-    TELEPORT_MAP_FORWARD_TEMPLATE,
-    TELEPORT_MAP_OPEN_TIMEOUT,
-    TELEPORT_MAP_RETURN_REFERENCE_POINT,
-    TELEPORT_MAP_RETURN_RELATIVE_POINT,
-    TELEPORT_MAP_SKILL_TEMPLATE,
-    TELEPORT_MAP_TELEPORT_CIRCLE_TEMPLATE,
-    TELEPORT_MAP_TELEPORT_CIRCLE_TEMPLATES,
-    TELEPORT_MAP_TITLE_OCR_REFERENCE_ROI,
-    TELEPORT_MAP_TITLE_OCR_RELATIVE_ROI,
-    TELEPORT_MAP_TRAVEL_SETTLE_SECONDS,
-    TRADE_MERCHANT_CONTEXT_TEMPLATE,
-    AreaMapContext,
-    LocatedStoryCard,
-    ProbedStoryCard,
-    SandboxConfirmation,
-    StoryBadgeCandidate,
-    StoryBadgeDetection,
-    _sandbox_skill_template,
 )
 from src.tasks.map_trade.trader_constants import (
     BUY_TO_SELL_SOLD_OUT_STABLE_HITS,
@@ -533,46 +401,6 @@ class TradeNavigationMixin:
         self.task.log_warning(f"跑商：砍价确认后未通过OCR确认商店页面，OCR={last_text or '-'}。")
         return False
 
-    def _bargain_and_enter_shop(self) -> NavigationResult:
-        bargained = self.vision.click_ocr([r"砍价"], roi=(80, 520, 1000, 150), name="砍价")
-        if bargained:
-            self.task.sleep(0.5)
-            if not self.vision.click_ocr(
-                [r"砍价", r"确认"], roi=(500, 300, 380, 280), name="砍价确认"
-            ):
-                self.task.log_warning("跑商：砍价确认未出现，可能缺少砍价药，继续进入商店。")
-        else:
-            self.task.log_warning("跑商：未找到砍价选项，尝试直接进入商店。")
-        self.task.sleep(0.7)
-        if not self._click_shop_entry_with_retries():
-            return NavigationResult(
-                False,
-                self.classify_trade(),
-                "未识别到商店/进入商店入口，停止进入商店",
-            )
-        state = self.wait_trade_state({ScreenState.SHOP}, 12)
-        if state == ScreenState.SHOP:
-            return NavigationResult(True, state)
-        return NavigationResult(
-            False,
-            state,
-            "已点击商店入口，但商店页OCR未确认",
-        )
-
-    def _click_shop_entry_with_retries(self) -> bool:
-        """Click the OCR-confirmed shop entry with bounded retries, never a blind point."""
-
-        for attempt in range(1, SHOP_ENTRY_CLICK_RETRIES + 1):
-            if self.vision.click_ocr(
-                [r"商店", r"进入商店"],
-                roi=(60, 400, 1040, 260),
-                name=f"商店入口({attempt})",
-            ):
-                return True
-            if attempt < SHOP_ENTRY_CLICK_RETRIES:
-                self.task.sleep(SHOP_ENTRY_CLICK_INTERVAL)
-        return False
-
     def _click_shop_close_control(self, after_sleep: float = 0.0) -> None:
         """Click the discount shop close control, template-first with a calibrated fallback."""
 
@@ -639,33 +467,6 @@ class TradeNavigationMixin:
                 self.task.sleep(SHOP_CLOSE_CLICK_INTERVAL)
         self._status("箱庭主页按钮", "模板未命中，回退到标定相对点(1797,63)")
         self.task.operate_click(*CHAPTER_HOME_POINT, after_sleep=after_sleep)
-
-    def reach_merchant_shop(self) -> NavigationResult:
-        state = self.classify_trade()
-        if state == ScreenState.SHOP:
-            return NavigationResult(True, state)
-        if state not in {ScreenState.SANDBOX, ScreenState.MERCHANT_DIALOG}:
-            entered = self.select_trade_card(MERCHANT_CARD_ID)
-            if not entered.success:
-                return entered
-
-        if self.classify_trade() == ScreenState.MERCHANT_DIALOG:
-            return self._bargain_and_enter_shop()
-        if not self._click_merchant_interaction(timeout=2.0, after_sleep=1.2):
-            return NavigationResult(
-                False,
-                ScreenState.SANDBOX,
-                MERCHANT_CLICK_LOCATION_FAILURE_MESSAGE,
-            )
-        if (
-            self.wait_trade_state(
-                {ScreenState.MERCHANT_DIALOG},
-                MERCHANT_DIALOG_CONFIRM_TIMEOUT,
-            )
-            != ScreenState.MERCHANT_DIALOG
-        ):
-            return NavigationResult(False, self.classify_trade(), "未进入商人对话")
-        return self._bargain_and_enter_shop()
 
     def return_home(self) -> NavigationResult:
         state = self.classify()
