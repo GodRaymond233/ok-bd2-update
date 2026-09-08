@@ -23,6 +23,7 @@ class Globals(QObject):
         from src.ui.live_screenshot import install_live_screenshot
         from src.ui.nav_sections import install_nav_sections
         from src.ui.quest_theme import apply_app_font
+        from src.ui.responsive_start_tab import install_responsive_start_tab
 
         apply_app_font()
 
@@ -31,6 +32,9 @@ class Globals(QObject):
             logger.info(f"seed BD2 Starter path {launch_path}")
         install_live_screenshot(main_window.start_tab)
         install_feedback_report(main_window.start_tab)
+        # 响应式重排要在 live_screenshot/feedback_report 之后：前者移动
+        # debug 卡片并创建实时截图行，后者往 debug 行追加按钮。
+        install_responsive_start_tab(main_window.start_tab)
         install_nav_sections(main_window)
         install_fluent_page_transition(main_window)
         install_start_list_motion(main_window.start_tab)

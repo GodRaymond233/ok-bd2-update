@@ -554,6 +554,10 @@ def install_quest_cards() -> bool:
 
     def quest_task_card_init(self, task, onetime):
         original_task_card_init(self, task, onetime)
+        # 卡片高度被固定为单行描述，窄窗口下描述只能截断显示，用 tooltip 兜底全文。
+        content_label = getattr(self.card, "contentLabel", None)
+        if content_label is not None:
+            content_label.setToolTip(content_label.text())
         self._quest_onetime = bool(onetime)
         _install_seal_and_meta(self)
         _apply_quest_theme(self)

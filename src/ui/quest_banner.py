@@ -21,6 +21,7 @@ from qfluentwidgets import FluentIcon, PrimaryPushButton, PushButton
 from src.tasks.DailyBatchTask import RUN_MODE_ALL, RUN_MODE_INCOMPLETE
 from src.tasks.run_history import default_store
 from src.ui.quest_theme import MONO_FONT, mix, on_theme_changed, palette
+from src.ui.shrinkable_label import ShrinkableLabel
 
 DAILY_BOARD_GROUP = "日常/周常"
 BATCH_TASK_NAME = "一键完成日常"
@@ -87,9 +88,11 @@ class DailyBoardBanner(QFrame):
         self.setObjectName("dailyBoardBanner")
 
         self.ring = ProgressRing(self)
-        self.title_label = QLabel(self)
+        # 不换行 QLabel 的最小宽度等于全文宽度，会把横幅钉到近 950px，
+        # 窄窗口下右侧按钮整排被裁；可压缩标签省略号收尾，文字让位、按钮保留。
+        self.title_label = ShrinkableLabel(parent=self)
         self.title_label.setObjectName("dailyBoardTitle")
-        self.sub_label = QLabel(self)
+        self.sub_label = ShrinkableLabel(parent=self)
         self.sub_label.setObjectName("dailyBoardSub")
         self.remaining_button = PushButton(FluentIcon.PLAY, "执行剩余", self)
         self.remaining_button.clicked.connect(self._start_remaining)

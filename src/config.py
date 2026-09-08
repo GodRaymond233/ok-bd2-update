@@ -8,6 +8,7 @@ from ok import Box
 from ok.util.GlobalConfig import create_basic_options
 
 from src import GAME_EXE, HWND_CLASS
+from src.compat.about_tab_layout import install_about_tab_layout
 from src.compat.launcher_update_notice import install_launcher_update_notice
 from src.compat.main_window_geometry import install_main_window_geometry_debounce
 from src.compat.starter_guard import enable_starter_launch_guard
@@ -23,7 +24,7 @@ from src.ui.responsive_task_config import install_responsive_task_config_ui
 
 # This marker is replaced with the Git tag when PyAppify creates the update
 # repository.  Source checkouts always read the project version from pyproject.
-version = "v1.2.4"
+version = "v1.2.5"
 
 
 def runtime_version(project_file: Path | None = None) -> str:
@@ -45,6 +46,7 @@ install_launcher_update_notice()
 install_responsive_task_config_ui()
 install_quest_ui()
 install_update_card_ui()
+install_about_tab_layout()
 
 DX11_OPTION = "Launch with DX11"
 
@@ -138,6 +140,8 @@ config = {
         <p style="color:red;">
         Use automation only after understanding the risks for your account and game client.
         </p>
+        <p>本软件使用 MiSans 字体。MiSans © 小米科技有限责任公司。
+        字体许可协议随附于 assets/fonts/LICENSE.txt。</p>
     """,
     "log_file": "logs/ok-bd2.log",
     "error_log_file": "logs/ok-bd2_error.log",

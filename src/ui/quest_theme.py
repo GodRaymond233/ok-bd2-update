@@ -9,6 +9,8 @@ the widgets introduced by the quest UI so the two never fight.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from qfluentwidgets import isDarkTheme
 
 BODY_FONT = '"MiSans", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif'
@@ -22,6 +24,43 @@ MONO_FONT = (
 APP_FONT_FAMILIES = ("MiSans", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI")
 
 
+def _install_framework_fonts() -> None:
+    """Keep upstream QSS from overriding the application's UI font families."""
+    from ok.ui.qt.common.style_sheet import StyleSheet
+    from ok.ui.qt.start.LogWindow import LogWindow
+    from ok.ui.qt.util import app as app_module
+
+    if getattr(StyleSheet, "_bd2_fonts_installed", False):
+        return
+    original_content = StyleSheet.content
+    original_log_theme = LogWindow._apply_theme
+    original_init = app_module.init_app_config
+    families = ", ".join(f"'{family}'" for family in APP_FONT_FAMILIES)
+
+    def content(self, *args, **kwargs):
+        qss = original_content(self, *args, **kwargs)
+        qss = qss.replace("'Segoe UI', 'Microsoft YaHei', 'PingFang SC'", families)
+        qss = qss.replace(
+            '\"Segoe UI SemiBold\", \"Microsoft YaHei\", \'PingFang SC\'',
+            families + "; font-weight: 600",
+        )
+        return qss.replace("'Microsoft YaHei Light'", families + "; font-weight: 300")
+
+    def log_theme(self):
+        original_log_theme(self)
+        self.status_label.setStyleSheet(f"font-family: {families};")
+
+    def init_app_config():
+        result = original_init()
+        apply_app_font()
+        return result
+
+    StyleSheet.content = content
+    LogWindow._apply_theme = log_theme
+    app_module.init_app_config = init_app_config
+    StyleSheet._bd2_fonts_installed = True
+
+
 def apply_app_font() -> None:
     """Apply the project font stack before qfluentwidgets builds controls."""
     # Importing the app config first ensures its ui_config.json load cannot
@@ -32,10 +71,20 @@ def apply_app_font() -> None:
 
     families = list(APP_FONT_FAMILIES)
     setFontFamilies(families, save=False)
+    _install_framework_fonts()
 
     app = QApplication.instance()
     if app is None:
         return
+    if not app.property("bd2_bundled_font_loaded"):
+        from PySide6.QtGui import QFontDatabase
+
+        folder = Path(__file__).resolve().parents[2] / "assets/fonts"
+        font_ids = [
+            QFontDatabase.addApplicationFont(str(folder / f"MiSans-{style}.otf"))
+            for style in ("Regular", "Bold")
+        ]
+        app.setProperty("bd2_bundled_font_loaded", all(font_id >= 0 for font_id in font_ids))
     font = app.font()
     font.setFamilies(families)
     app.setFont(font)

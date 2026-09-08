@@ -1,16 +1,8 @@
 from __future__ import annotations
 
-# 「应用更新」卡片状态标签的稳定可读宽度。上游 UpdateCard 把 status_label 放在
-# addStretch(1) 占位符之前且 stretch=0，布局把富余宽度全给占位符，标签宽度被钉在
-# sizeHint：中文短句 70px 折两行、错误长文最多 294px 折五行。离屏实验
-# （.local-dev/experiments/update_card_layout/run.py）证实定宽 260 在 750/950/1250
-# 三档窗口宽度下都稳定可读，而 setStretchFactor 方案在 750px 时会把标签挤到 14px
-# 一字一行，不可用。
-UPDATE_CARD_STATUS_MIN_WIDTH = 260
-
-# 单行宽度超过该值的长文本（错误详情、双语指引）才启用 260 定宽；短状态保持自然
-# 宽度，避免与版本下拉同行时在 600px 最小窗口宽度下把右侧按钮挤出视野。
-UPDATE_CARD_STATUS_SINGLE_LINE_MAX = 280
+# 「应用更新」卡片状态标签的宽度策略。标签按自然单行宽度定宽（短状态绝不折行），
+# 超过单行上限的长文本（错误详情、双语指引）收敛到定宽并允许折行。
+UPDATE_CARD_STATUS_WRAP_WIDTH = 260
 
 # pyappify.get_version_list 要求启动器 PYAPPIFY_VERSION >= 1.2.2 才支持“检查更新”
 # （pyappify/__init__.py 的 _is_supported_pyappify_version）；更老的启动器只会抛
@@ -18,6 +10,9 @@ UPDATE_CARD_STATUS_SINGLE_LINE_MAX = 280
 MIN_CHECK_UPDATES_LAUNCHER_VERSION = (1, 2, 2)
 
 PATCH_MARKER = "_ok_bd2_update_card_ui_enabled"
+
+# 状态标签左右内边距补偿，避免定宽后末字贴边。
+_STATUS_HORIZONTAL_PADDING = 8
 
 
 def parse_launcher_version(version) -> tuple[int, ...] | None:
@@ -45,6 +40,41 @@ def _too_old_message(version) -> str:
     )
 
 
+def status_width_for_text(label, message: str) -> int:
+    """状态标签的目标宽度：短文本自然单行，长文本收敛到折行宽度。"""
+    if not message:
+        return 0
+    natural = label.fontMetrics().horizontalAdvance(message) + _STATUS_HORIZONTAL_PADDING
+    return min(natural, UPDATE_CARD_STATUS_WRAP_WIDTH)
+
+
+def _refit_status_label(card) -> None:
+    width = status_width_for_text(card.status_label, card.status_label.text())
+    card.status_label.setVisible(width > 0)
+    card.status_label.setFixedWidth(width)
+
+
+def _flow_controls_row(card) -> None:
+    """把控件行换成 WrapLayout：窗口过窄时按钮折到下一行，而不是被右缘裁掉。"""
+    from src.ui.wrap_layout import WrapLayout
+
+    layout = card.layout()
+    controls = card.controls_layout
+    widgets = []
+    for index in range(controls.count()):
+        item = controls.itemAt(index)
+        if item is not None and item.widget() is not None:
+            widgets.append(item.widget())
+    wrap = WrapLayout()
+    wrap.setSpacing(8)
+    layout.insertLayout(0, wrap)
+    layout.removeItem(controls)
+    for widget in widgets:
+        wrap.addWidget(widget)
+    controls.deleteLater()
+    card.controls_wrap = wrap
+
+
 def install_update_card_ui() -> None:
     from ok.ui.qt.about.UpdateCard import UpdateCard
 
@@ -58,6 +88,8 @@ def install_update_card_ui() -> None:
     def stable_init(self, *args, **kwargs):
         original_init(self, *args, **kwargs)
         self.status_label.setMinimumWidth(0)
+        _flow_controls_row(self)
+        _refit_status_label(self)
 
     def stable_check_for_updates(self):
         version = getattr(self.pyappify_module, "pyappify_version", None)
@@ -68,11 +100,7 @@ def install_update_card_ui() -> None:
 
     def stable_set_status(self, message, error=False):
         original_set_status(self, message, error)
-        metrics = self.status_label.fontMetrics()
-        if metrics.horizontalAdvance(message) > UPDATE_CARD_STATUS_SINGLE_LINE_MAX:
-            self.status_label.setMinimumWidth(UPDATE_CARD_STATUS_MIN_WIDTH)
-        else:
-            self.status_label.setMinimumWidth(0)
+        _refit_status_label(self)
 
     UpdateCard.__init__ = stable_init
     UpdateCard.check_for_updates = stable_check_for_updates

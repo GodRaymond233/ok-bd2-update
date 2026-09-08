@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWi
 from qfluentwidgets import CaptionLabel
 
 PREVIEW_INTERVAL_MS = 50
-PREVIEW_MIN_WIDTH = 320
+PREVIEW_MIN_WIDTH = 240
 PREVIEW_ASPECT_WIDTH = 16
 PREVIEW_ASPECT_HEIGHT = 9
 TOP_ROW_MAX_HEIGHT = 240
@@ -310,6 +310,58 @@ class LiveScreenshotWidget(QWidget):
         old_executor.shutdown(wait=False, cancel_futures=True)
 
 
+def install_start_tab_responsive(start_tab) -> None:
+    """解除首页的固定最小宽度，窗口收窄时内容压缩/折行而不是整体被右缘裁掉。
+
+    Tab 基类禁用了水平滚动条，任何子控件的固定最小宽度都会把整页 view 锁宽：
+    三列选择行的列表、开发工具按钮行、顶部 StartCard 的标题文本都是来源。
+    """
+    if getattr(start_tab, "_bd2_start_tab_responsive_installed", False):
+        return
+
+    for attr in ("device_list", "capture_list", "interaction_list"):
+        widget = getattr(start_tab, attr, None)
+        if widget is not None:
+            widget.setMinimumWidth(0)
+
+    start_card = getattr(start_tab, "start_card", None)
+    if start_card is not None:
+        from src.ui.shrinkable_label import ShrinkableLabel
+
+        # 标题/版本号换为可压缩标签（省略号收尾），保证「截图/刷新/开始」始终可见。
+        for attr in ("titleLabel", "contentLabel"):
+            old = getattr(start_card, attr, None)
+            if old is None:
+                continue
+            new = ShrinkableLabel(old.text(), start_card)
+            new.setObjectName(old.objectName())
+            new.setFont(old.font())
+            new.setAlignment(old.alignment())
+            start_card.vBoxLayout.replaceWidget(old, new)
+            old.deleteLater()
+            setattr(start_card, attr, new)
+
+    debug_widget = getattr(start_tab, "debug_widget", None)
+    debug_layout = getattr(start_tab, "debug_layout", None)
+    debug_card = _card_for_widget(debug_widget)
+    if debug_card is not None and debug_layout is not None:
+        from src.ui.wrap_layout import wrap_container
+
+        buttons = []
+        while debug_layout.count():
+            item = debug_layout.takeAt(0)
+            if item is not None and item.widget() is not None:
+                buttons.append(item.widget())
+        container, wrap = wrap_container(buttons)
+        debug_card.topLayout.removeWidget(debug_widget)
+        debug_widget.deleteLater()
+        debug_card.topLayout.addWidget(container, debug_card.stretch)
+        start_tab.debug_widget = container
+        start_tab.debug_layout = wrap
+
+    start_tab._bd2_start_tab_responsive_installed = True
+
+
 def install_live_screenshot(start_tab) -> None:
     if getattr(start_tab, "_bd2_live_screenshot_installed", False):
         return
@@ -366,15 +418,16 @@ def install_live_screenshot(start_tab) -> None:
 
     live_widget = LiveScreenshotWidget()
     live_card = Card("实时截图", live_widget, stretch=0)
-    live_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+    live_card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
 
     lower_row = QWidget(start_tab.view)
     lower_layout = QHBoxLayout(lower_row)
     lower_layout.setContentsMargins(0, 0, 0, 0)
     lower_layout.setSpacing(12)
-    lower_layout.addWidget(live_card, 1, Qt.AlignTop)
+    lower_layout.addWidget(live_card, 0, Qt.AlignTop)
 
     side_column = QWidget(lower_row)
+    side_column.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
     side_layout = QVBoxLayout(side_column)
     side_layout.setContentsMargins(0, 0, 0, 0)
     side_layout.setSpacing(12)
