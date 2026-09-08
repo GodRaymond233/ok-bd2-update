@@ -87,8 +87,9 @@ PVP_AP_SHORTAGE_PATTERN = r"不足"
 PVP_SEASON_REWARD_AFTER_CLICK_SECONDS = 3.0
 PVP_RANK_PAGE_AFTER_CLICK_SECONDS = 2.0
 PVP_AUTO_BATTLE_MENU_VERIFY_SECONDS = 3.5
-# BUG-20260906-01：网络波动会整枪吞掉点击，自动战斗弹窗内可验证的单发点击
-# 统一按该次数做"点击→确认→失败重试"兜底；确认窗口见各调用点。
+# BUG-20260906-01：网络波动会整枪吞掉点击，可验证的单发点击统一按该次数
+# 做"点击→确认→失败重试"兜底，BUG-20260908-04 起舞台点击同样适用
+# （使者不在台上时首击会被当作移动指令）；确认窗口见各调用点。
 PVP_CLICK_VERIFY_ATTEMPTS = 3
 # A real promotion flow shows the confirm text while the page is still fading
 # in. Waiting for a fresh frame avoids clicking a stale/transient OCR result.
@@ -520,36 +521,57 @@ class PVPTask(BaseBD2Task):
             after_sleep=5.0,
         )
 
-    def _start_auto_battle(self, multiplier: int) -> str:
-        self.info_set("当前阶段", "寻找 PVP 舞台")
-        if not self._click_template_until(
+    def _click_pvp_stage_once(self, timeout: float) -> bool:
+        return self._click_template_until(
             PVP_STAGE_TEMPLATE,
-            timeout=12.0,
+            timeout=timeout,
             name="PVP 舞台",
             target_reference_offset=PVP_STAGE_CLICK_REFERENCE_OFFSET,
             after_sleep=3.0,
-        ):
+        )
+
+    def _start_auto_battle(self, multiplier: int) -> str:
+        self.info_set("当前阶段", "寻找 PVP 舞台")
+        if not self._click_pvp_stage_once(12.0):
             self._recover_stage_position()
-            if not self._click_template_until(
-                PVP_STAGE_TEMPLATE,
-                timeout=8.0,
-                name="PVP 舞台",
-                target_reference_offset=PVP_STAGE_CLICK_REFERENCE_OFFSET,
-                after_sleep=3.0,
-            ):
+            if not self._click_pvp_stage_once(8.0):
+                # BUG-20260908-04：舞台纹理小条失配时无图可查，落帧留存用户
+                # 箱庭实景以定位根因（对照 pvp_hub_entry_failed 等埋点）。
+                self._save_flow_diagnostic("pvp_stage_not_found")
                 self.log_info("镜中之战：未找到 PVP 舞台物件。")
                 return "failed"
 
         self.info_set("当前阶段", "打开自动战斗")
-        found_auto, text = self._wait_for_ocr_patterns(
-            [r"自动战斗", r"自动"],
-            timeout=float(self.config.get("PVP 菜单等待秒数", 12.0)),
-            name="PVP 自动战斗",
-            roi=PVP_AUTO_BATTLE_SCREEN_ROI,
-        )
-        self.info_set("PVP 自动战斗 OCR", text or "-")
+        menu_timeout = float(self.config.get("PVP 菜单等待秒数", 12.0))
+        found_auto = False
+        text = ""
+        for attempt in range(1, PVP_CLICK_VERIFY_ATTEMPTS + 1):
+            found_auto, text = self._wait_for_ocr_patterns(
+                [r"自动战斗", r"自动"],
+                timeout=menu_timeout,
+                name="PVP 自动战斗",
+                roi=PVP_AUTO_BATTLE_SCREEN_ROI,
+            )
+            self.info_set("PVP 自动战斗 OCR", text or "-")
+            if found_auto:
+                break
+            if attempt >= PVP_CLICK_VERIFY_ATTEMPTS:
+                break
+            # BUG-20260908-04：箱庭是可行走场景，使者不在台上时点台会被当作
+            # 移动指令（RPT-20260908-183941 实证：模板与落点全对、台上无人、
+            # 菜单不出）。等使者走位/游开后补击，模板再丢时仍走定位修正兜底。
+            self.log_info(
+                f"镜中之战：第{attempt}/{PVP_CLICK_VERIFY_ATTEMPTS}次点击舞台"
+                "后未确认自动战斗菜单，重试。"
+            )
+            if not self._click_pvp_stage_once(8.0):
+                self._recover_stage_position()
+                if not self._click_pvp_stage_once(8.0):
+                    self._save_flow_diagnostic("pvp_stage_not_found")
+                    self.log_info("镜中之战：重试点击时未找到 PVP 舞台物件。")
+                    return "failed"
         if not found_auto:
-            self.log_info("镜中之战：点击舞台后未出现自动战斗菜单。")
+            self.log_info("镜中之战：多次点击舞台后自动战斗菜单仍未出现。")
             self._save_flow_diagnostic("pvp_auto_battle_failed")
             return "failed"
 

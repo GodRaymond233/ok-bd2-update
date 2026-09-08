@@ -9,7 +9,7 @@ from qfluentwidgets import FluentIcon
 
 from src.tasks.BaseBD2Task import BaseBD2Task
 from src.tasks.map_trade.calendar import parse_manual_calendar
-from src.tasks.map_trade.models import DEFAULT_SALE_WHITELIST
+from src.tasks.map_trade.models import DEFAULT_SALE_WHITELIST, OPTIONAL_COOKING_RECIPES
 from src.tasks.map_trade.navigator import Navigator
 from src.tasks.map_trade.progress import ProgressStore
 from src.tasks.map_trade.trader import Trader
@@ -205,7 +205,7 @@ class MapTradeTask(MapAutomationTaskBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = "每日跑商"
-        self.description = "每日按配置依次执行购买和出售。"
+        self.description = "每日按配置依次执行制作料理、购买和出售。"
         self.icon = FluentIcon.SHOPPING_CART
         self.group_name = "日常/周常"
         self.group_icon = FluentIcon.CALENDAR
@@ -214,6 +214,8 @@ class MapTradeTask(MapAutomationTaskBase):
         self.default_config.update(
             {
                 "启用": True,
+                "制作料理": True,
+                "5星料理": [],
                 "买": True,
                 "收藏重建周期": "每周",
                 "卖": True,
@@ -232,6 +234,8 @@ class MapTradeTask(MapAutomationTaskBase):
         )
         self.config_description.update(
             {
+                "制作料理": "跑商前按优先级制作料理，全部选择 MAX；灰色料理跳过。",
+                "5星料理": "额外制作的白框五道料理，默认不选；街头烤鸡肉串始终最后制作。",
                 "买": "按每日08:00库存批次进入 Q_sp6 完成砍价，并按本地卡带与灰星坐标表重建收藏。",
                 "收藏重建周期": (
                     "每周只重建一次收藏；每次会强制重新核对；永不则只购买当前收藏。"
@@ -268,6 +272,11 @@ class MapTradeTask(MapAutomationTaskBase):
         )
         self.config_type.update(
             {
+                "制作料理": {"sub_configs": {True: ["5星料理"]}},
+                "5星料理": {
+                    "type": "multi_selection",
+                    "options": list(OPTIONAL_COOKING_RECIPES),
+                },
                 "买": {"sub_configs": {True: ["收藏重建周期"]}},
                 "收藏重建周期": {
                     "type": "drop_down",
@@ -344,5 +353,9 @@ class MapTradeTask(MapAutomationTaskBase):
         progress = ProgressStore()
         progress.load()
         trader = Trader(self, vision, navigator, progress)
-        phases = (("买", "买", trader.run_buy), ("卖", "卖", trader.run_sell))
+        phases = (
+            ("制作料理", "制作料理", trader.run_cooking),
+            ("买", "买", trader.run_buy),
+            ("卖", "卖", trader.run_sell),
+        )
         return self._run_phases(navigator, phases)

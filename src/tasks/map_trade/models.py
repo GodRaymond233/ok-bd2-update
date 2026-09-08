@@ -238,6 +238,35 @@ DEFAULT_RECIPES = (
     "地狱火紫菜包饭",
 )
 
+# Red, yellow, then blue priority; reference order breaks ties within each group.
+DEFAULT_COOKING_RECIPES = (
+    "巧克力鸡尾酒",
+    "冰镇甜点",
+    "香草牛排",
+    "蜂蜜黄油杏仁",
+    "鱼子酱蛋包饭",
+    "火烤鱼板棒",
+    "泰瑞丝派",
+    "橄榄油意面",
+    "三明治便当",
+)
+
+OPTIONAL_COOKING_RECIPES = DEFAULT_RECIPES
+FINAL_COOKING_RECIPE = "街头烤鸡肉串"
+
+COOKING_RECIPE_TEMPLATES = {
+    "巧克力鸡尾酒": "image/Shop/cook_Chocolate Cocktail.png",
+    "蜂蜜黄油杏仁": "image/Shop/cook_Honey Butter Almonds.png",
+    "鱼子酱蛋包饭": "image/Shop/cook_Caviar Omurice.png",
+    "香草牛排": "image/Shop/cook_Vanilla Steak.png",
+    "冰镇甜点": "image/Shop/cook_Iced Dessert.png",
+    "泰瑞丝派": "image/Shop/cook_Teresse Pie.png",
+    "橄榄油意面": "image/Shop/cook_Olive Oil Pasta.png",
+    "三明治便当": "image/Shop/cook_Sandwich Lunch Box.png",
+    "火烤鱼板棒": "image/Shop/cook_Grilled Fish Cake Skewer.png",
+    FINAL_COOKING_RECIPE: "image/Shop/cook_Street Grilled Chicken Skewer.png",
+}
+
 RECIPE_TEMPLATES = {
     "卢戈山参烤串": "image/Shop/cook_Lugas Ginseng Skewer.png",
     "煤炭饼干": "image/Shop/cook_Coal Cookies.png",
@@ -245,6 +274,7 @@ RECIPE_TEMPLATES = {
     "透明沙拉": "image/Shop/cook_Transparent Salad.png",
     "地狱火紫菜包饭": "image/Shop/cook_Hellfire Gimbap.png",
 }
+COOKING_RECIPE_TEMPLATES.update(RECIPE_TEMPLATES)
 
 DEFAULT_SALE_WHITELIST = (
     "蜂蜜黄油杏仁",
