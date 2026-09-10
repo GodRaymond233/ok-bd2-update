@@ -55,6 +55,12 @@ class BuyFlowMixin:
                 f"买：砍价后状态为{entered.state.value}，未确认商店页，停止购买。"
             )
             return False
+        purchase_state = self._wait_for_buy_all_favorites_state()
+        if purchase_state is None:
+            return False
+        if purchase_state[0] is None:
+            self._buy_completed_in_current_shop = True
+            return True
         rebuild_cycle = str(self.task.config.get("收藏重建周期", "每周"))
         every_run = rebuild_cycle == "每次"
         if rebuild_cycle == "永不":
@@ -132,11 +138,13 @@ class BuyFlowMixin:
         return False
 
     def buy_all_favorites(self) -> bool:
-        located = self._wait_for_buy_all_favorites_button()
+        located = self._wait_for_buy_all_favorites_state()
         if located is None:
-            self.task.log_warning("买：商店页面未稳定显示一键购买全部收藏按钮。")
+            self.task.log_warning("买：商店页面未稳定显示可购买按钮或售罄状态。")
             return False
         button_center, frame = located
+        if button_center is None:
+            return True
         self._status(
             "一键购买全部收藏按钮点击中心",
             f"center=({button_center[0]},{button_center[1]})",
@@ -160,12 +168,14 @@ class BuyFlowMixin:
         self.task.log_info("买：已确认购买全部收藏商品。")
         return True
 
-    def _wait_for_buy_all_favorites_button(
+    def _wait_for_buy_all_favorites_state(
         self,
         timeout: float = BUY_ALL_FAVORITES_TIMEOUT,
-    ) -> tuple[tuple[int, int], np.ndarray] | None:
+    ) -> tuple[tuple[int, int] | None, np.ndarray] | None:
+        """返回按钮与当前帧；中心为 None 表示售罄，整体 None 表示超时。"""
         end_at = monotonic() + max(0.0, timeout)
         consecutive_hits = 0
+        sold_out_hits = 0
         last_text = ""
         last_center: tuple[int, int] | None = None
         last_frame: np.ndarray | None = None
@@ -180,6 +190,21 @@ class BuyFlowMixin:
             text = " ".join(value for value in texts if value)
             self._status("一键购买全部收藏按钮 OCR", text or "-")
             last_text = text or last_text
+            sold_out = self.vision.match(frame, BUY_TO_SELL_SOLD_OUT_TEMPLATE)
+            sold_out_passed = self.vision.passes(sold_out, BUY_TO_SELL_SOLD_OUT_TEMPLATE)
+            sold_out_hits = sold_out_hits + 1 if sold_out_passed else 0
+            self._status(
+                "买前售罄模板",
+                (
+                    f"{'命中' if sold_out_passed else '未命中'} "
+                    f"{sold_out_hits}/{BUY_TO_SELL_SOLD_OUT_STABLE_HITS}; "
+                    f"m={sold_out.score:.3f}, p={sold_out.pixel_score:.3f}, "
+                    f"z={sold_out.zncc_score:.3f}"
+                ),
+            )
+            if sold_out_hits >= BUY_TO_SELL_SOLD_OUT_STABLE_HITS:
+                self.task.log_info("买：售罄模板连续命中，判定本日库存已购买，跳过购买。")
+                return None, frame
             matched_center = next(
                 (
                     center
@@ -192,7 +217,8 @@ class BuyFlowMixin:
                 ),
                 None,
             )
-            if matched_center is not None:
+            # 售罄时按钮仍可能显示，任一售罄帧都必须阻止按钮点击。
+            if matched_center is not None and not sold_out_passed:
                 consecutive_hits += 1
                 last_center = matched_center
                 last_frame = frame
@@ -214,7 +240,7 @@ class BuyFlowMixin:
                 break
             self.task.sleep(BUY_ALL_FAVORITES_INTERVAL)
         self.task.log_warning(
-            f"买：一键购买全部收藏按钮OCR超时，OCR={last_text or '-'}。"
+            f"买：购买按钮或售罄状态确认超时，OCR={last_text or '-'}。"
         )
         return None
 
@@ -250,4 +276,3 @@ class BuyFlowMixin:
             f"买：购买全部收藏确认OCR超时，OCR={last_text or '-'}。"
         )
         return False
-

@@ -2,6 +2,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 from pathlib import Path
 from time import monotonic
 from typing import Any, Callable
@@ -37,6 +38,8 @@ GREEN_MASK_TOLERANCE = 0
 CARTRIDGE_RECENT_ENTRY_POINT = (0.7875, 0.9111111111111111)
 RECENT_CARTRIDGE_SPECIAL_PAGE_SECONDS = 3.0
 RECENT_CARTRIDGE_SPECIAL_PAGE_MAX_ACTIONS = 3
+FIEND_HUNT_REWARD_TITLE = "魔兽追踪者赛季奖励"
+FIEND_HUNT_REWARD_DISMISS_TEXT = "奖励已发放至背包"
 BEIJING_TIMEZONE = timezone(timedelta(hours=8))
 RECENT_PVP_CARTRIDGE_TEMPLATE_FILE = "cartridge-image2-left-lower-cutout.png"
 RECENT_PVP_CARTRIDGE_TEMPLATE_THRESHOLD = 0.95
@@ -47,6 +50,12 @@ TEMPLATE_DIR = PROJECT_ROOT / "recognition-assets" / "template-assets"
 # Shared lock for task instances whose ``__init__`` never ran (object.__new__);
 # see ``BaseBD2Task._task_info_lock``.
 _INFO_FALLBACK_LOCK = threading.RLock()
+
+
+class CartridgeSpecialPageResult(Enum):
+    ABSENT = "absent"
+    HANDLED = "handled"
+    BLOCKED = "blocked"
 
 
 @dataclass(frozen=True)
@@ -468,27 +477,28 @@ class BaseBD2Task(BaseTask):
             self.log_warning(str(exc), notify=True)
             return False
 
-        # Fixed common flow: confirmed home -> classify the recent cartridge
-        # -> recognition settle delay
-        # -> recent cartridge -> OCR PVP special pages only for a recent PVP cartridge
-        # -> recognize the quick-switch icon -> click the recognized center
-        # -> confirm the cartridge selection page.
         self._sleep_after_recognition()
         self.info_set("当前阶段", "点击最近卡带")
         self.operate_click(*CARTRIDGE_RECENT_ENTRY_POINT, after_sleep=0.0)
-        if recent_cartridge_is_pvp:
-            self._handle_recent_cartridge_special_pages()
+        special_pages = self._handle_recent_cartridge_special_pages(
+            allow_pvp_pages=recent_cartridge_is_pvp,
+        )
+        if special_pages is CartridgeSpecialPageResult.BLOCKED:
+            self._save_flow_diagnostic("cartridge_quick_switch_failed")
+            return False
         self.info_set("当前阶段", "寻找快速切换按钮")
         quick_switch_opened = click_quick_switch()
         if not quick_switch_opened:
-            if recent_cartridge_is_pvp:
-                handled_after_timeout = self._handle_recent_cartridge_special_pages()
-                if not handled_after_timeout:
-                    self._save_flow_diagnostic("cartridge_quick_switch_failed")
-                    return False
+            special_pages = self._handle_recent_cartridge_special_pages(
+                allow_pvp_pages=recent_cartridge_is_pvp,
+            )
+            if special_pages is CartridgeSpecialPageResult.BLOCKED:
+                self._save_flow_diagnostic("cartridge_quick_switch_failed")
+                return False
+            if special_pages is CartridgeSpecialPageResult.HANDLED:
                 self.info_set("当前阶段", "特殊页面后重试快速切换按钮")
                 quick_switch_opened = click_quick_switch()
-            else:
+            elif not recent_cartridge_is_pvp:
                 quick_switch_opened = self._retry_recent_cartridge_entry(
                     ensure_home=ensure_home,
                     click_quick_switch=click_quick_switch,
@@ -516,6 +526,10 @@ class BaseBD2Task(BaseTask):
         self._sleep_after_recognition()
         self.info_set("当前阶段", "点击最近卡带")
         self.operate_click(*CARTRIDGE_RECENT_ENTRY_POINT, after_sleep=0.0)
+        if self._handle_recent_cartridge_special_pages(
+            allow_pvp_pages=False,
+        ) is CartridgeSpecialPageResult.BLOCKED:
+            return False
         return click_quick_switch()
 
     def _save_flow_diagnostic(self, name: str) -> None:
@@ -628,23 +642,53 @@ class BaseBD2Task(BaseTask):
         timeout: float = RECENT_CARTRIDGE_SPECIAL_PAGE_SECONDS,
         interval: float = 0.25,
         allow_season_reward: bool | None = None,
-    ) -> bool:
-        """OCR and dismiss PVP promotion, demotion, and season reward pages."""
+        *,
+        allow_pvp_pages: bool = True,
+    ) -> CartridgeSpecialPageResult:
+        """Dismiss fiend rewards on any cartridge and PVP pages when enabled."""
         if allow_season_reward is None:
             allow_season_reward = self._is_beijing_monday()
         end_at = monotonic() + max(0.0, float(timeout))
         handled: set[str] = set()
         action_count = 0
+        fiend_reward_pending = False
+        fiend_reward_clear_frames = 0
 
         while True:
             boxes = self._recent_cartridge_ocr_boxes()
-            text, action_name, target_box = self._pvp_special_page_action(
-                boxes,
-                allow_season_reward=allow_season_reward,
+            text = " ".join(
+                str(getattr(box, "name", "")) for box in boxes
             )
+            normalized = normalize_ocr_text(text)
+            action_name, target_box = "", None
+            if (
+                FIEND_HUNT_REWARD_TITLE in normalized
+                or FIEND_HUNT_REWARD_DISMISS_TEXT in normalized
+            ):
+                fiend_reward_pending = True
+                fiend_reward_clear_frames = 0
+                if FIEND_HUNT_REWARD_TITLE in normalized:
+                    action_name = FIEND_HUNT_REWARD_TITLE
+                    target_box = self._find_ocr_box(boxes, FIEND_HUNT_REWARD_DISMISS_TEXT)
+            elif fiend_reward_pending:
+                # An empty OCR result cannot prove that the overlay closed.
+                fiend_reward_clear_frames = fiend_reward_clear_frames + 1 if normalized else 0
+                if fiend_reward_clear_frames >= 2:
+                    fiend_reward_pending = False
+                    self.info_set("魔兽追踪者赛季奖励", "已确认关闭")
+            if allow_pvp_pages and not fiend_reward_pending:
+                text, action_name, target_box = self._pvp_special_page_action(
+                    boxes,
+                    allow_season_reward=allow_season_reward,
+                )
             self.info_set("最近卡带特殊页面 OCR", text or "-")
 
-            if action_name and action_name not in handled and target_box is not None:
+            if (
+                action_name
+                and action_name not in handled
+                and target_box is not None
+                and action_count < RECENT_CARTRIDGE_SPECIAL_PAGE_MAX_ACTIONS
+            ):
                 point = self._ocr_box_center(target_box)
                 if point is not None:
                     frame_width = max(1, int(self.width))
@@ -657,15 +701,26 @@ class BaseBD2Task(BaseTask):
                     )
                     handled.add(action_name)
                     action_count += 1
+                    if action_name == FIEND_HUNT_REWARD_TITLE:
+                        end_at = max(end_at, monotonic() + max(0.0, float(timeout)))
 
             if (
                 monotonic() >= end_at
-                or action_count >= RECENT_CARTRIDGE_SPECIAL_PAGE_MAX_ACTIONS
+                or (
+                    action_count >= RECENT_CARTRIDGE_SPECIAL_PAGE_MAX_ACTIONS
+                    and not fiend_reward_pending
+                )
             ):
                 break
             self.sleep(max(0.0, float(interval)))
 
-        return bool(handled)
+        if fiend_reward_pending:
+            self.info_set("魔兽追踪者赛季奖励", "关闭未确认，停止卡带切换")
+            return CartridgeSpecialPageResult.BLOCKED
+        return (
+            CartridgeSpecialPageResult.HANDLED
+            if handled else CartridgeSpecialPageResult.ABSENT
+        )
 
     @classmethod
     def _pvp_special_page_action(
