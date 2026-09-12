@@ -36,6 +36,9 @@ DEFAULT_FILE = ("configs", "task_run_history.json")
 # Status texts containing any of these markers never count as a completion.
 _FAILURE_MARKERS = ("中止", "失败")
 
+# The 失败 field uses list strings, joined stage names, or empty placeholders.
+_NO_FAILURE_VALUES = frozenset({"", "-", "0", "无", "[]", "none", "false"})
+
 
 def _to_beijing(ts: float) -> datetime:
     return datetime.fromtimestamp(ts, tz=BEIJING_TZ)
@@ -61,7 +64,16 @@ def _is_successful_run(info: dict) -> bool:
     if info.get("Error"):
         return False
     status = str(info.get("状态", ""))
-    return not any(marker in status for marker in _FAILURE_MARKERS)
+    if any(marker in status for marker in _FAILURE_MARKERS):
+        return False
+    # Several tasks return False with a status text that carries no failure
+    # marker (e.g. DailyTask's "公会、小屋、酒馆结束。"), so the structured
+    # 失败/结果 keys must be consulted too, or failed runs get recorded as
+    # completions and the scheduler skips them for the whole day.
+    failure = str(info.get("失败", "")).strip()
+    if failure and failure.casefold() not in _NO_FAILURE_VALUES:
+        return False
+    return "失败" not in str(info.get("结果", ""))
 
 
 def is_successful_run(info: dict) -> bool:

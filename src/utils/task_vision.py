@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Callable
 
 import cv2
@@ -115,6 +116,21 @@ def match_template(
     | None = None,
 ) -> MatchResult:
     """Match one template against a frame using the shared pipeline."""
+
+    if spec.relative_rois:
+        return max(
+            (
+                match_template(
+                    frame, replace(spec, relative_rois=(), relative_roi=region),
+                    config, template_dir, cache, min_size=min_size,
+                    skip_scale_errors=skip_scale_errors,
+                    template_threshold=template_threshold,
+                    roi_reference_size=roi_reference_size, loader=loader,
+                )
+                for region in spec.relative_rois
+            ),
+            key=lambda result: result.score,
+        )
 
     if loader is None:
         loader = lambda _template_dir, spec: load_template(  # noqa: E731

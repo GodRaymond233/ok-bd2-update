@@ -27,6 +27,7 @@ class TemplateSpec:
     default_threshold: float | None = None
     candidate_threshold: float | None = None
     crop: tuple[float, float, float, float] | None = None
+    relative_rois: tuple[tuple[float, float, float, float], ...] = ()
 
 
 @dataclass(frozen=True)

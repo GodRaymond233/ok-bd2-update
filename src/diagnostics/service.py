@@ -56,24 +56,35 @@ class DiagnosticsManager:
         method_name = _capture_method_name(method)
 
         executor_was_running = bool(executor is not None and not executor.paused)
-        if executor_was_running:
-            executor.pause()
+        try:
+            if executor_was_running:
+                executor.pause()
 
-        safe_point_reached = _wait_for_interaction_idle(executor, device_manager)
-        if not safe_point_reached:
-            warnings.append("未能在时限内确认鼠标操作已经结束")
+            safe_point_reached = _wait_for_interaction_idle(executor, device_manager)
+            if not safe_point_reached:
+                warnings.append("未能在时限内确认鼠标操作已经结束")
 
-        return DiagnosticSnapshot(
-            captured_at=datetime.now().astimezone().isoformat(timespec="seconds"),
-            frame=frame,
-            frame_age_seconds=frame_age,
-            capture_method=method_name,
-            task=_task_snapshot(executor, warnings),
-            executor_was_running=executor_was_running,
-            safe_point_reached=safe_point_reached,
-            warnings=tuple(warnings),
-            task_started_at=task_started_at,
-        )
+            return DiagnosticSnapshot(
+                captured_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+                frame=frame,
+                frame_age_seconds=frame_age,
+                capture_method=method_name,
+                task=_task_snapshot(executor, warnings),
+                executor_was_running=executor_was_running,
+                safe_point_reached=safe_point_reached,
+                warnings=tuple(warnings),
+                task_started_at=task_started_at,
+            )
+        except Exception as exc:
+            # 快照尚未交给调用方时，由这里恢复本次准备操作造成的暂停。
+            if executor_was_running and executor.paused:
+                try:
+                    executor.start()
+                except Exception as resume_error:
+                    raise RuntimeError(
+                        f"准备诊断现场失败：{exc}；恢复运行失败：{resume_error}，请手动继续任务。"
+                    ) from exc
+            raise
 
     def build_report(
         self,

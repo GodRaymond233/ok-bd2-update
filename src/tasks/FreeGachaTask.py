@@ -83,35 +83,41 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
         self._click_reference(*GACHA_ENTRY_REFERENCE_POINT, after_sleep=0.5)
         loading_state, gacha_found, _ = self._wait_loading_or_gacha_page("进入抽卡页")
         if loading_state == "stuck":
-            return False
+            return self._fail_run("进入抽卡页")
         if not gacha_found and not self._wait_for_gacha_page("进入抽卡页"):
-            return False
+            return self._fail_run("进入抽卡页")
 
         if not self._run_free_section(
             "服装抽抽乐",
             verify_finished=True,
         ):
-            return False
+            return self._fail_run("服装抽抽乐")
 
         self._sleep_after_recognition()
         self._click_reference(*EQUIPMENT_TAB_REFERENCE_POINT, after_sleep=0.8)
         if not self._wait_for_gacha_page("切换装备抽卡"):
-            return False
+            return self._fail_run("切换装备抽卡")
 
         if not self._run_free_section(
             "装备抽抽乐",
             verify_finished=False,
         ):
-            return False
+            return self._fail_run("装备抽抽乐")
 
         self._sleep_after_recognition()
         self._click_reference(*BACK_BUTTON_REFERENCE_POINT, after_sleep=1.0)
         if not self._wait_loading_or_home_confirmation("抽抽乐返回主页"):
-            return False
+            return self._fail_run("返回主页")
 
         self.info_set("状态", "白嫖抽抽乐完成。")
         self.log_completion("白嫖抽抽乐：流程完成。")
         return True
+
+    def _fail_run(self, stage: str) -> bool:
+        # 失败路径必须把"失败"写进状态，否则 run_history 会把本次运行
+        # 记成成功，调度账本当天不再补跑（BUG-20260912-01）。
+        self.info_set("状态", f"白嫖抽抽乐{stage}失败。")
+        return False
 
     def _run_free_section(
         self,
@@ -127,12 +133,12 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
         self._sleep_after_recognition()
         self._click_reference(*FREE_GACHA_BUTTON_REFERENCE_POINT, after_sleep=0.5)
         if not self._wait_for_confirm_dialog(section_name):
-            return False
+            return self._fail_run(f"{section_name}确认弹窗")
 
         self._sleep_after_recognition()
         self._click_reference(*CONFIRM_DIALOG_OK_REFERENCE_POINT, after_sleep=1.0)
         if not self._handle_result_until_back(section_name):
-            return False
+            return self._fail_run(f"{section_name}结果处理")
 
         if verify_finished:
             still_available, _ = self._wait_for_free_gacha(
@@ -141,7 +147,7 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
             )
             if still_available:
                 self.log_info(f"{section_name}：返回后仍检测到所有免费抽抽乐。")
-                return False
+                return self._fail_run(f"{section_name}领取复核")
             self.log_info(f"{section_name}：免费抽已结束。")
 
         return True

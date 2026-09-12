@@ -18,22 +18,16 @@ from src.tasks.map_trade.action_icons import (
 from src.tasks.map_trade.card_status import StoryCardCompletion
 from src.tasks.map_trade.models import CardSpec, MapPageMode, MatchResult, TemplateSpec
 from src.utils.calibration import FHD_1080, HD_720, reference_rect_to_relative_roi
-from src.utils.cartridge_quick_switch import QUICK_SWITCH_PAGE_LABELS
+from src.utils.cartridge_quick_switch import QUICK_SWITCH_PAGE_LABELS, QUICK_SWITCH_SEARCH_REGIONS
 from src.utils.vision_models import FrameGeometry
 
 QUICK_SWITCH_TEMPLATE = TemplateSpec(
     "快速切换按钮",
     "image/green/QuickSwitchPlayIco.png",
     0.88,
-    relative_roi=(0.25, 0.85, 0.65, 1.0),
+    relative_rois=QUICK_SWITCH_SEARCH_REGIONS,
     scale_ratios=(0.95, 0.975, 1.0, 1.025, 1.05),
     min_pixel_score=0.85,
-    candidate_center_roi=(
-        650 / FHD_1080.width,
-        950 / FHD_1080.height,
-        1050 / FHD_1080.width,
-        1045 / FHD_1080.height,
-    ),
     minimum_safe_threshold=0.88,
     # 与 SquareGoddessTask.QUICK_SWITCH_TEMPLATE 同一按钮：梦幻广场内暗色
     # 圆底样式在 1600x901 实机帧 zncc 最高 0.838（RPT-20260902-225925），

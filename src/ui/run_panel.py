@@ -24,7 +24,7 @@ from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLay
 from qfluentwidgets import FluentIcon, PushButton, ToolButton
 
 from src.tasks.BaseBD2Task import task_info_snapshot
-from src.tasks.run_history import contains_joined_name
+from src.tasks.run_history import contains_joined_name, is_successful_run
 from src.ui.quest_theme import MONO_FONT, mix, on_theme_changed, palette, rgba
 
 logger = Logger.get_logger(__name__)
@@ -65,7 +65,7 @@ def run_state(task) -> str:
     status = str(info.get(_STATUS_KEY, ""))
     if "中止" in status:
         return "abort"
-    if info.get("Error"):
+    if not is_successful_run(info):
         return "fail"
     return "done"
 

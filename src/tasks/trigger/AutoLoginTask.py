@@ -196,6 +196,12 @@ class AutoLoginTask(BaseBD2Task):
                 return False
 
         if self._state == "clearing":
+            # clearing 帧不经过 _wait_loading_then_home 的超时检查，必须
+            # 在这里补上登录后总等待预算，超时走统一的重置+退避。
+            now = monotonic()
+            if self._login_wait_timed_out(now):
+                self._handle_login_wait_timeout(now)
+                return False
             return self._clear_popups_until_home(frame)
         if self._state in ("waiting_loading", "loading", "waiting_home"):
             return self._wait_loading_then_home(frame)
@@ -449,6 +455,9 @@ class AutoLoginTask(BaseBD2Task):
 
     def _wait_loading_then_home(self, frame) -> bool:
         now = monotonic()
+        if self._login_wait_timed_out(now):
+            self._handle_login_wait_timeout(now)
+            return False
 
         self.info_set("TOUCH TO START", "-")
 
@@ -456,14 +465,11 @@ class AutoLoginTask(BaseBD2Task):
         self.info_set("小屋按钮", f"{home_button.score:.3f}")
         if self._passes(home_button, home_spec):
             self._state = "clearing"
-            self._login_clicked_at = None
+            # 保留 _login_clicked_at：clearing 仍受登录后总等待预算约束，
+            # 否则公告清理可以无界点击、主页永远确认不了（BUG-20260912-04）。
             self._waiting_home_since = None
             self.info_set("加载页面", "-")
             return self._clear_popups_until_home(frame, home_button, home_spec)
-
-        if self._login_wait_timed_out(now):
-            self._handle_login_wait_timeout(now)
-            return False
 
         loading = self._match(frame, LOADING_TEMPLATE)
         self.info_set("加载页面", f"{loading.score:.3f}")
@@ -491,7 +497,6 @@ class AutoLoginTask(BaseBD2Task):
 
         if elapsed >= grace_seconds and self._passes_dimmed_home(home_button):
             self._state = "clearing"
-            self._login_clicked_at = None
             self._waiting_home_since = None
             self.info_set("加载页面", "-")
             self._set_stage("清理公告")

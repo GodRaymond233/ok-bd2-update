@@ -8,6 +8,12 @@ from src.utils.image_utils import relative_roi_frame
 REFERENCE_WIDTH = FHD_1080.width
 REFERENCE_HEIGHT = FHD_1080.height
 
+# 快速切换入口位于底部按钮带或餐厅左上角；分别搜索，排除两者之间的场景内容。
+QUICK_SWITCH_SEARCH_REGIONS = (
+    (0.15, 0.85, 0.65, 1.0),
+    (0.16, 0.08, 0.24, 0.19),
+)
+
 RECENT_CATEGORY_LABEL = "最近"
 SHOPKEEPER_CATEGORY_LABEL = "店长游戏卡"
 STORY_CATEGORY_LABEL = "剧情游戏卡"

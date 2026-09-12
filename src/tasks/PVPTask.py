@@ -20,6 +20,7 @@ from src.utils.cartridge_quick_switch import (
     BATTLE_GAMEPLAY_CATEGORY_POINT,
     FIXED_CARTRIDGE_SLOT_PRE_CLICK_DELAY_SECONDS,
     GAMEPLAY_CATEGORY_HIGHLIGHT_MIN_RATIO,
+    QUICK_SWITCH_SEARCH_REGIONS,
     RECENT_CATEGORY_LABEL,
     STORY_CATEGORY_LABEL,
     category_highlight_ratio,
@@ -228,7 +229,7 @@ class PVPTask(BaseBD2Task):
         self.log_info(f"镜中之战：目标倍率 {target_multiplier}。")
 
         if not self._ensure_pvp_hub():
-            self.info_set("状态", "未能进入 PVP 箱庭。")
+            self.info_set("状态", "镜中之战失败：未能进入 PVP 箱庭。")
             return False
 
         current_multiplier = target_multiplier
@@ -250,7 +251,7 @@ class PVPTask(BaseBD2Task):
                 self.log_completion("镜中之战：1 倍 AP 仍不足，流程结束。")
                 return True
             if start_state != "started":
-                self.info_set("状态", "未能开始战斗。")
+                self.info_set("状态", "镜中之战失败：未能开始战斗。")
                 return False
 
             if not self._wait_result_and_leave(current_multiplier):
@@ -690,6 +691,12 @@ class PVPTask(BaseBD2Task):
                     f"镜中之战：免费AP开关第{attempt}/"
                     f"{PVP_CLICK_VERIFY_ATTEMPTS}次点击后未确认开启，重试。"
                 )
+
+        # 末次点击的效果只能在循环外回读，否则"前几次被吞、末次生效"
+        # 会被误报为失败（BUG-20260912-02）。
+        if self._free_ap_switch_on():
+            self.info_set("PVP 免费AP", "已开启")
+            return True
 
         self.info_set("PVP 免费AP", "未确认")
         self.log_info("镜中之战：未能确认仅用免费鸡尾酒开关。")
@@ -1697,16 +1704,10 @@ QUICK_PACK_TEMPLATE = TemplateSpec(
     file_name="image/green/QuickSwitchPlayIco.png",
     threshold_key="快速切换按钮阈值",
     default_threshold=0.88,
-    relative_roi=(0.25, 0.85, 0.65, 1.0),
+    relative_rois=QUICK_SWITCH_SEARCH_REGIONS,
     green_mask=True,
     scale_ratios=(0.95, 0.975, 1.0, 1.025, 1.05),
     min_pixel_score=0.85,
-    candidate_center_roi=(
-        650 / FHD_1080.width,
-        950 / FHD_1080.height,
-        1050 / FHD_1080.width,
-        1045 / FHD_1080.height,
-    ),
     minimum_safe_threshold=0.88,
     # 与 SquareGoddessTask.QUICK_SWITCH_TEMPLATE 同一按钮：梦幻广场内暗色
     # 圆底样式在 1600x901 实机帧 zncc 最高 0.838（RPT-20260902-225925），

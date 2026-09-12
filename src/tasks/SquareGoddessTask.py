@@ -19,6 +19,7 @@ from src.utils.cartridge_quick_switch import (
     LIFE_GAMEPLAY_CATEGORY_LABEL,
     LIFE_GAMEPLAY_CATEGORY_OCR_ROI,
     LIFE_GAMEPLAY_CATEGORY_POINT,
+    QUICK_SWITCH_SEARCH_REGIONS,
     SHOPKEEPER_CATEGORY_LABEL,
     category_highlight_ratio,
 )
@@ -169,19 +170,19 @@ class SquareGoddessTask(BaseBD2Task):
         self.info_set("状态", "广场女神像启动。")
         self.log_info("广场女神像：开始从主页进入梦幻广场。")
         if not self._enter_square_from_home():
-            self.info_set("状态", "未能进入梦幻广场。")
+            self.info_set("状态", "广场女神像失败：未能进入梦幻广场。")
             return False
 
         self.info_set("状态", "已进入梦幻广场，开始寻找女神像。")
         if not self._pray_at_goddess():
-            self.info_set("状态", "未能完成女神像许愿。")
+            self.info_set("状态", "广场女神像失败：未能完成女神像许愿。")
             self._status_set("女神像许愿结果", "失败")
             return False
 
         self.info_set("状态", "女神像许愿完成。")
         self._status_set("女神像许愿结果", "完成")
         if not self._return_home_from_square():
-            self.info_set("状态", "女神像许愿完成，但未能返回主页。")
+            self.info_set("状态", "广场女神像失败：许愿完成，但未能返回主页。")
             return False
         self.info_set("状态", "女神像许愿完成并返回主页。")
         self.log_completion("广场女神像：许愿完成并返回主页。")
@@ -954,16 +955,10 @@ QUICK_SWITCH_TEMPLATE = TemplateSpec(
     file_name="image/green/QuickSwitchPlayIco.png",
     threshold_key="快速切换按钮阈值",
     default_threshold=0.88,
-    roi=(480, 918, 768, 162),
+    relative_rois=QUICK_SWITCH_SEARCH_REGIONS,
     green_mask=True,
     scale_ratios=(0.95, 0.975, 1.0, 1.025, 1.05),
     min_pixel_score=0.85,
-    candidate_center_roi=(
-        650 / FHD_1080.width,
-        950 / FHD_1080.height,
-        1050 / FHD_1080.width,
-        1045 / FHD_1080.height,
-    ),
     minimum_safe_threshold=0.88,
     # 梦幻广场内的快捷切换按钮是白图标+深色圆底样式，与模板采样的浅色
     # 样式存在结构差异：1600x901 实机帧 zncc 最高 0.838（RPT-20260902-225925），

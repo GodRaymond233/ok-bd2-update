@@ -62,7 +62,8 @@ def _cache_is_expired(envelope: dict | None, now: datetime) -> bool:
     if now_beijing - cached_at_beijing > MAX_CALENDAR_CACHE_AGE:
         return True
     sale_date = sale_price_calendar_date(now_beijing)
-    return (cached_at_beijing.year, cached_at_beijing.month) != (sale_date.year, sale_date.month)
+    cached_sale_date = sale_price_calendar_date(cached_at_beijing)
+    return (cached_sale_date.year, cached_sale_date.month) != (sale_date.year, sale_date.month)
 
 
 @dataclass(frozen=True)
@@ -284,7 +285,7 @@ class PriceCalendarClient:
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         parsed = json.loads(payload.decode("utf-8"))
         envelope = {
-            "cached_at": datetime.now(UTC_PLUS_8).isoformat(timespec="seconds"),
+            "cached_at": self._now().isoformat(timespec="seconds"),
             "etag": etag,
             "source": source,
             "payload": parsed,
