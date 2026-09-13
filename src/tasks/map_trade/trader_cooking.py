@@ -154,6 +154,9 @@ COOKING_BACK_TEMPLATE = TemplateSpec(
 class CookingRecipeOutcome(str, Enum):
     COOKED = "cooked"
     UNAVAILABLE = "unavailable"
+    # 列表中未识别到该配方：保持原门禁不放宽，直接跳过制作下一个，
+    # 结束时以警报汇总说明（BUG-20260913-04 维护者口径）。
+    ABSENT = "absent"
     FAILED = "failed"
 
 
@@ -225,6 +228,7 @@ class CookingFlowMixin:
         self._cooking_opened = False
         flow_success = False
         unavailable: list[str] = []
+        absent: list[str] = []
         cooked: list[str] = []
         try:
             if self._enter_cooking_list():
@@ -238,6 +242,9 @@ class CookingFlowMixin:
                     if outcome is CookingRecipeOutcome.UNAVAILABLE:
                         unavailable.append(recipe)
                         continue
+                    if outcome is CookingRecipeOutcome.ABSENT:
+                        absent.append(recipe)
+                        continue
                     self.task.log_warning(f"料理：{recipe} 未完成，停止后续料理。")
                     flow_success = False
                     break
@@ -249,6 +256,11 @@ class CookingFlowMixin:
                 self.task.log_info(
                     "料理：材料不足或按钮不可用，保留为下次重试："
                     f"{'、'.join(unavailable)}。"
+                )
+            if absent:
+                self.task.log_warning(
+                    f"当前未识别到食谱：{'、'.join(absent)}",
+                    notify=True,
                 )
             if cooked:
                 self.task.log_info(f"料理：本次已完成 {'、'.join(cooked)}。")
@@ -304,10 +316,21 @@ class CookingFlowMixin:
         spec = COOKING_IDENTITY_SPECS[recipe]
         recipe_match = self.vision.match(list_snapshot.frame, spec)
         if not self.vision.passes(recipe_match, spec):
-            self.task.log_warning(f"料理：一页料理列表中未识别到 {recipe}。")
-            return CookingRecipeOutcome.FAILED
+            # 维护者口径：保持原门禁不放宽，未识别到即跳过并制作下一个，
+            # 不降低阈值、不做复扫，结束时的警报统一说明（BUG-20260913-04）。
+            self.task.log_info(
+                f"料理：一页料理列表中未识别到 {recipe}，跳过并继续后续料理。"
+            )
+            return CookingRecipeOutcome.ABSENT
         enabled = self._cooking_card_enabled(list_snapshot.frame, recipe_match)
         if enabled is None:
+            # 亮度状态不明确仍是识别失败：退出前保存实际识别原帧供报告取证。
+            self._record_recipe_list_evidence(
+                list_snapshot.frame,
+                recipe,
+                spec,
+                recipe_match,
+            )
             self.task.log_warning(f"料理：{recipe} 图标亮度状态不明确。")
             return CookingRecipeOutcome.FAILED
         if not enabled:
@@ -394,6 +417,29 @@ class CookingFlowMixin:
         if "料理" not in normalize_text(self.vision.simplify(header)):
             return None
         return CookingListSnapshot(frame, max(candidates, key=lambda result: result.score))
+
+    def _record_recipe_list_evidence(
+        self,
+        frame,
+        recipe: str,
+        spec: TemplateSpec,
+        recipe_match: MatchResult,
+    ) -> None:
+        """退出料理页之前保存身份识别失败原帧，报告按 *_failed 收录。"""
+        try:
+            evidence = self.task.save_frame(f"cooking_{recipe}_failed", frame)
+        except Exception as exc:
+            self.task.log_warning(f"料理：{recipe} 识别证据帧保存失败：{exc}")
+            return
+        zncc = getattr(recipe_match, "zncc_score", -1.0)
+        self.task.log_warning(
+            f"料理：{recipe} 识别证据已保存 {evidence.name}；"
+            f"模板={spec.file_name}，"
+            f"阈值={spec.threshold:.2f}，"
+            f"match={recipe_match.score:.4f}，"
+            f"pixel={recipe_match.pixel_score:.4f}，"
+            f"zncc={zncc:.4f}。"
+        )
 
     @staticmethod
     def _cooking_card_enabled(frame, match: MatchResult) -> bool | None:
