@@ -80,6 +80,7 @@ GUILD_SIGN_IN_ENTRY_REFERENCE_POINT = (370, 155)
 GUILD_SIGN_IN_SUCCESS_ACKNOWLEDGE_REFERENCE_POINT = (450, 650)
 BACK_BUTTON_REFERENCE_POINT = (100, 50)
 MY_HOME_ENTRY_REFERENCE_POINT = (166, 158)
+MY_HOME_TITLE_RELATIVE_ROI = (0.11, 0.01, 0.25, 0.10)
 BUSINESS_COLLECT_ENTRY_REFERENCE_POINT = (165, 260)
 BUSINESS_COLLECT_CLAIM_REFERENCE_POINT = (1090, 814)
 BUSINESS_COLLECT_CLOSE_REFERENCE_POINT = (832, 814)
@@ -353,13 +354,22 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
                 timeout=float(self.config.get("小屋页面等待秒数", 12.0)),
                 name="my_home",
             )
+        if not found:
+            title = self._quick_vision().ocr_text(
+                self.capture_frame(),
+                "小屋页面标题",
+                relative_roi=MY_HOME_TITLE_RELATIVE_ROI,
+                target_height=0,
+                ocr_scale=2.0,
+            )
+            found = self._keyword_match_count(title, ["我的小屋"]) >= 1
         self._status_set("小屋页面检测", "是" if found else "否")
         if found:
             self.log_info("小屋签到：已进入小屋页面，返回主页。")
             self._sleep_after_recognition()
             self._click_reference(*BACK_BUTTON_REFERENCE_POINT, after_sleep=1.0)
         else:
-            self.log_info("小屋签到：未检测到 my-home.png，不执行返回点击。")
+            self.log_info("小屋签到：未确认小屋页面标题，不执行返回点击。")
             self._status_set("小屋签到返回主页结果", "未执行")
             return False
 
