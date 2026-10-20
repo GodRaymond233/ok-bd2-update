@@ -1,9 +1,11 @@
+import re
 from time import monotonic
 
 import numpy as np
-from ok.task.exceptions import TaskDisabledException
+from ok.task.exceptions import FinishedException, TaskDisabledException
 from qfluentwidgets import FluentIcon
 
+from src.tasks import run_history
 from src.tasks.BaseBD2Task import BaseBD2Task
 from src.tasks.map_trade.models import TemplateSpec
 from src.tasks.quick_hunt import QuickHuntConfigMixin
@@ -142,6 +144,8 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
         "一键收菜 OCR",
         "一键收菜领取结果",
         "一键收菜关闭次数",
+        "常客圣石结果",
+        "常客圣石奖励",
         "一键收菜返回主页 小屋按钮",
         "一键收菜返回主页 亮度",
         "一键收菜返回主页 抽抽乐 OCR",
@@ -179,7 +183,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = "公会、小屋、酒馆"
-        self.description = "执行公会签到、小屋签到和酒馆一键收菜。"
+        self.description = "执行公会签到、小屋签到、酒馆一键收菜和常客圣石领取。"
         self.icon = FluentIcon.CAR
         self.group_name = "日常/周常"
         self.group_icon = FluentIcon.CALENDAR
@@ -212,11 +216,12 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
                 '执行公会签到': "从主页进入公会，领取每日签到奖励。",
                 '执行小屋签到': "从主页进入小屋，确认到达后返回主页。",
                 '小屋进入最大点击次数': "小屋入口点击后未确认到达时的补点上限（转场可能吞点击）。",
-                '执行一键收菜': "打开经营管理弹窗并执行一键获得。",
+                '执行一键收菜': "一键领取经营奖励，随后进入餐厅领取常客圣石。",
             }
         )
 
     def run(self):
+        self.info_set("日常周期", None)
         if not bool(self.config.get("启用", True)):
             self.info_set("状态", "公会、小屋、酒馆已禁用。")
             self.log_info("公会、小屋、酒馆已禁用。")
@@ -233,6 +238,8 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
         failed = []
         skipped = []
         stop_remaining = False
+        scope = run_history.stage_scope(self)
+        self.info_set("日常周期", float(scope.partition(":")[0]))
         for name, config_key, func in steps:
             if not bool(self.config.get(config_key, True)):
                 skipped.append(name)
@@ -244,18 +251,43 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
             self.info_set("当前任务", name)
             self.log_info(f"开始日常子任务：{name}")
             try:
+                record = run_history.read_stage(self, name)
+                if (self.config.get("_仅执行未完成步骤", False)
+                        and record.get("state") == "done" and record.get("scope") == scope):
+                    if self.recover_daily_home():
+                        success.append(name)
+                        self.log_info(f"{name}：本周期已有完成证据，继续剩余步骤。")
+                    else:
+                        failed.append(name)
+                        stop_remaining = True
+                        self.log_info(f"{name}：已完成但未恢复主页，停止剩余步骤。")
+                    continue
                 if func():
                     success.append(name)
+                    run_history.save_stage(self, name, "done", scope=scope)
                 else:
                     failed.append(name)
-                    stop_remaining = True
-                    self.log_info(f"{name} 未满足后续触发条件，停止剩余子任务。")
-            except TaskDisabledException:
+                    self._save_flow_diagnostic("daily_step_failed")
+                    stop_remaining = not self.recover_daily_home()
+                    self.log_info(f"{name} 失败，" + (
+                        "未恢复主页，停止剩余子任务。" if stop_remaining
+                        else "已确认主页，继续后续独立子任务。"
+                    ))
+            except (TaskDisabledException, FinishedException):
                 raise
             except Exception as exc:
-                failed.append(name)
-                stop_remaining = True
+                if name not in failed:
+                    failed.append(name)
+                if name in success:
+                    success.remove(name)
+                self._save_flow_diagnostic("daily_step_error")
+                stop_remaining = not self.recover_daily_home()
                 self.log_error(f"日常子任务失败：{name}", exc)
+            finally:
+                # Publish completed steps immediately, including when the user stops later.
+                self.info_set("完成", str(success))
+                self.info_set("失败", str(failed))
+                self.info_set("跳过", str(skipped))
 
         self.info_set("完成", str(success))
         self.info_set("失败", str(failed))
@@ -308,6 +340,12 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
                 reject_template_on_home=True,
             )
         self.info_set("公会签到 OCR", text or "-")
+        if not success_found:
+            success_found = self._wait_for_existing_guild_visit()
+            if success_found:
+                self.info_set("公会签到结果", "公会访问完成，无新奖励提示")
+                home_ok = self._return_home_from_guild()
+                return home_ok
         self._status_set("公会签到成功", "是" if success_found else "否")
         if success_found:
             self.log_info("公会签到：检测到签到成功提示。")
@@ -317,11 +355,37 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
             )
         else:
             self.log_info("公会签到：未检测到签到成功提示，按流程返回主页。")
+            self._save_flow_diagnostic("guild_sign_in_failed")
 
         # 返回主页是清理动作，不能掩盖签到提示缺失；否则失败会被批处理
         # 与运行历史误记为成功，并在当日跳过补跑。
         home_ok = self._return_home_from_guild()
         return bool(success_found and home_ok)
+
+    def _wait_for_existing_guild_visit(self) -> bool:
+        deadline = monotonic() + 3.0
+        hits = 0
+        while True:
+            frame = self.capture_frame()
+            text = self._ocr_text(frame, name="公会重复访问确认")
+            normalized = normalize_ocr_text(text)
+            # Membership and persistent page labels distinguish this from the home icon
+            # and guild search/join screens. Chat connection text alone is not a blocker.
+            member_page = (
+                self._keyword_match_count(text, GUILD_PAGE_KEYWORDS) >= 2
+                and "公会成员" in normalized and "退出" in normalized
+                and not any(word in normalized for word in (
+                    "创建公会", "搜索公会", "申请加入", "重新登录", "服务器维护",
+                ))
+                and not any(normalize_ocr_text(part) in {"确认", "确定"} for part in text.split())
+            )
+            hits = hits + 1 if member_page else 0
+            if hits >= 2:
+                self._status_set("公会签到成功", "已访问")
+                return True
+            if monotonic() >= deadline:
+                return False
+            self.sleep(0.4)
 
     def _return_home_from_guild(self) -> bool:
         """Leave the guild page with bounded back-click retries.
@@ -374,7 +438,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
                 # 补点前重新确认仍在主页；已开始转场/加载则停止补点，交给后续模板等待。
                 try:
                     retry_frame = self.capture_frame()
-                except TaskDisabledException:
+                except (TaskDisabledException, FinishedException):
                     raise
                 except Exception:
                     retry_frame = None
@@ -421,7 +485,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
             for attempt in range(MY_HOME_TITLE_OCR_RETRIES):
                 try:
                     frame = self.capture_frame()
-                except TaskDisabledException:
+                except (TaskDisabledException, FinishedException):
                     raise
                 except Exception:
                     frame = None
@@ -444,7 +508,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
         while monotonic() <= end_at:
             try:
                 frame = self.capture_frame()
-            except TaskDisabledException:
+            except (TaskDisabledException, FinishedException):
                 raise
             except Exception:
                 frame = None
@@ -471,6 +535,8 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
         return False
 
     def run_business_collect(self) -> bool:
+        self.info_set("常客圣石结果", "未执行")
+        self.info_set("常客圣石奖励", "-")
         if not self._wait_for_home_confirmation("一键收菜入口前主页确认"):
             return False
 
@@ -489,12 +555,79 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
             return False
 
         claimed = self._finish_business_collect()
-        home_ok = self._wait_for_home_confirmation("一键收菜返回主页")
+        stones_ok = claimed and self._collect_business_guest_stones()
+        home_ok = (
+            self.recover_daily_home() if claimed
+            else self._wait_for_home_confirmation("一键收菜返回主页")
+        )
         self._status_set("一键收菜领取结果", "已领取或无待领取奖励" if claimed else "未确认")
         self._status_set("一键收菜返回主页结果", "通过" if home_ok else "失败")
-        if not (claimed and home_ok):
+        if not (claimed and stones_ok and home_ok):
             self._save_flow_diagnostic("business_collect_failed")
-        return claimed and home_ok
+        return claimed and stones_ok and home_ok
+
+    def _collect_business_guest_stones(self) -> bool:
+        self.info_set("常客圣石结果", "未确认")
+        vision = self._quick_vision()
+        frame = self.capture_frame()
+        boxes = vision.ocr_boxes(frame, "餐馆入口")
+        row = self._find_ocr_box(boxes, "餐馆营业额")
+        if row is None:
+            self.log_info("常客圣石：未识别到餐馆营业额行。")
+            return False
+        # 收菜后弹窗会重新排版；只点击与餐馆标题同行的前往按钮。
+        actions = [
+            box for box in boxes
+            if normalize_ocr_text(box.name) in {"立刻前往", "立即前往"}
+            and box.x > row.x
+            and abs(box.y + box.height / 2 - row.y - row.height / 2)
+            <= (box.height + row.height) / 2
+        ]
+        if len(actions) != 1:
+            self.log_info("常客圣石：未能确定餐馆行的前往按钮。")
+            return False
+        self._click_business_bounds(frame, self._business_bounds(actions[0]), after_sleep=1.0)
+        arrived, _ = self._wait_for_ocr_keywords(
+            ["格鲁菲餐厅"],
+            timeout=float(self.config.get("loading 消失等待秒数", 35.0)),
+            minimum_matches=1,
+            name="常客圣石餐厅确认",
+        )
+        if not arrived:
+            self.log_info("常客圣石：未确认进入格鲁菲餐厅。")
+            return False
+
+        deadline = monotonic() + 12.0
+        clicks = 0
+        confirm_until = 0.0
+        while monotonic() < deadline:
+            frame = self.capture_frame()
+            boxes = vision.ocr_boxes(frame, "常客圣石")
+            rewards = [
+                reward.group() for box in boxes
+                if (reward := re.search(r"[火水风光暗]圣石[×xX*]\d+", normalize_ocr_text(box.name)))
+            ]
+            if clicks and rewards:
+                self.info_set("常客圣石结果", "已领取")
+                self.info_set("常客圣石奖励", "、".join(rewards))
+                self.log_info(f"常客圣石：已领取，{'、'.join(rewards)}。")
+                return True
+            guest = next((box for box in boxes if normalize_ocr_text(box.name) == "常客"), None)
+            if (self._find_ocr_box(boxes, "格鲁菲餐厅") is None or guest is None
+                    or monotonic() < confirm_until):
+                self.sleep(0.25)
+                continue
+            if clicks >= 2:
+                self.info_set("常客圣石结果", "无待领取圣石")
+                self.log_info("常客圣石：点击两次均未出现奖励提示，当前无待领取圣石。")
+                return True
+            self._click_business_bounds(frame, self._business_bounds(guest), after_sleep=0.8)
+            clicks += 1
+            # 每次等待奖励 3 秒；首次额外留 1.5 秒缓冲，期间继续读取迟到的提示。
+            confirm_until = monotonic() + 3.0 + (1.5 if clicks == 1 else 0.0)
+        self.log_info("常客圣石：未确认领取完成。")
+        self._save_flow_diagnostic("business_guest_stones_failed")
+        return False
 
     def _finish_business_collect(self) -> bool:
         end_at = monotonic() + BUSINESS_COLLECT_TIMEOUT
@@ -528,6 +661,8 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
                     )
                     if disabled_frames >= 2:
                         claimed = closing = True
+                if claimed:
+                    return True
                 if not closing:
                     if monotonic() < retry_at:
                         self.sleep(0.4)
@@ -539,6 +674,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
                         continue
                     closing = True
                     self.log_info("一键收菜：领取结果未确认，关闭经营弹窗后报告失败。")
+                    self._save_flow_diagnostic("business_collect_claim_failed")
                 if cancel is not None:
                     target = self._business_bounds(cancel)
                 else:
@@ -563,7 +699,8 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
             close_clicks += 1
             self.info_set("一键收菜关闭次数", close_clicks)
         self.log_info("一键收菜：结算退出未在限定时间或点击次数内完成。")
-        return claimed
+        self._save_flow_diagnostic("business_collect_close_failed")
+        return False
 
     @staticmethod
     def _business_bounds(box) -> tuple[float, float, float, float]:
@@ -629,3 +766,31 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
         if self._keyword_match_count(text, ["获得奖励", "奖励获得", "REWARD"]) >= 1:
             return self._find_ocr_box(boxes, "确认") or self._find_ocr_box(boxes, "确定")
         return None
+
+
+class BD2BusinessCollectTestTask(BaseBD2Task):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.name = "一键收菜与常客圣石测试"
+        self.description = "从主页一键收菜，进入餐厅领取常客圣石，结束后返回主页。"
+        self.icon = FluentIcon.SHOPPING_CART
+        self.group_name = "测试"
+        self.group_icon = FluentIcon.BOOK_SHELF
+        self.visible = True
+
+    def run(self):
+        daily = self.executor.get_task_by_class(DailyTask)
+        if daily is None:
+            self.log_warning("未找到日常任务，无法启动收菜测试。")
+            return False
+        self.info_set("状态", "正在一键收菜并领取常客圣石。")
+        daily.info_clear()
+        try:
+            success = daily.run_business_collect()
+            if not success:
+                daily.recover_daily_home()
+        finally:
+            for key, value in daily.info_snapshot().items():
+                self.info_set(key, value)
+        self.info_set("状态", "收菜与常客圣石测试完成。" if success else "收菜与常客圣石测试失败。")
+        return success

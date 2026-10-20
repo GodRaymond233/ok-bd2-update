@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+from collections import ChainMap
 from pathlib import Path
 
 from ok import Config
-from ok.task.exceptions import TaskDisabledException
+from ok.task.exceptions import FinishedException, TaskDisabledException
 from ok.util.file import get_relative_path
 from qfluentwidgets import FluentIcon
 
@@ -105,6 +106,7 @@ class MapAutomationTaskBase(BaseBD2Task):
     def _run_phases(self, navigator, phases) -> bool:
         completed: list[str] = []
         failed: list[str] = []
+        partial_warnings: list[str] = []
         skipped: list[str] = []
         cancelled = False
         self.info_set("状态", f"{self.task_log_name}启动。")
@@ -128,11 +130,14 @@ class MapAutomationTaskBase(BaseBD2Task):
                     (completed if success else failed).append(name)
                     if not success:
                         self._save_diagnostic(f"{self.diagnostic_prefix}_{name}_failed")
+                        if getattr(result, "partial", False):
+                            partial_warnings.append(message)
+                            continue
                         self.log_warning(
                             f"{self.task_log_name}：{name}失败，停止后续阶段。"
                         )
                         break
-                except TaskDisabledException:
+                except (TaskDisabledException, FinishedException):
                     raise
                 except Exception as exc:
                     failed.append(name)
@@ -142,7 +147,7 @@ class MapAutomationTaskBase(BaseBD2Task):
                         f"{self.task_log_name}：{name}异常，停止后续阶段。"
                     )
                     break
-        except TaskDisabledException:
+        except (TaskDisabledException, FinishedException):
             cancelled = True
             raise
         finally:
@@ -150,7 +155,7 @@ class MapAutomationTaskBase(BaseBD2Task):
                 self.info_set("当前阶段", "返回章节主页")
                 try:
                     returned = navigator.return_home()
-                except TaskDisabledException:
+                except (TaskDisabledException, FinishedException):
                     raise
                 except Exception as exc:
                     failed.append("返回章节主页")
@@ -166,6 +171,10 @@ class MapAutomationTaskBase(BaseBD2Task):
         self.info_set("失败", "、".join(failed) or "-")
         self.info_set("跳过", "、".join(skipped) or "-")
         if failed:
+            if len(partial_warnings) == len(failed):
+                self.info_set("状态", f"{self.task_log_name}执行结束，存在问题。")
+                self.log_warning("；".join(partial_warnings))
+                return False
             self.info_set("状态", f"{self.task_log_name}部分流程未完成。")
             return False
         self.info_set("状态", f"{self.task_log_name}完成。")
@@ -173,12 +182,7 @@ class MapAutomationTaskBase(BaseBD2Task):
         return True
 
     def _save_diagnostic(self, name: str) -> None:
-        try:
-            self.save_frame(name, self.capture_frame())
-        except TaskDisabledException:
-            raise
-        except Exception as exc:
-            self.log_warning(f"诊断截图保存失败：{exc}")
+        self._save_flow_diagnostic(name)
 
 class MapTradeTask(MapAutomationTaskBase):
     """Daily merchant task, separated from weekly map collection."""
@@ -246,7 +250,8 @@ class MapTradeTask(MapAutomationTaskBase):
         )
         self.config_description.update(
             {
-                "制作料理": "跑商前按优先级制作料理，全部选择 MAX；灰色料理跳过。",
+                "制作料理": "跑商前按优先级制作料理，全部选择 MAX；灰色料理跳过，"
+                "当天同一配置已确认制作的料理不重复。",
                 "5星料理": "额外制作的白框五道料理，默认不选；街头烤鸡肉串始终最后制作。",
                 "买": "按每日08:00库存批次进入 Q_sp6 完成砍价，并按本地卡带与灰星坐标表重建收藏。",
                 "收藏重建周期": (
@@ -371,3 +376,38 @@ class MapTradeTask(MapAutomationTaskBase):
                 ("卖", "卖", trader.run_sell),
             )
             return self._run_phases(navigator, phases)
+
+
+class BD2MapTradeSellTestTask(BaseBD2Task):
+    """Run the registered daily merchant task with only its sale phase enabled."""
+
+    status_keys = MapTradeTask.status_keys
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.name = "跑商当天纯卖测试"
+        self.description = "按每日跑商当前配置执行当天最高价出售，结束后返回主页。"
+        self.icon = FluentIcon.SHOPPING_CART
+        self.group_name = "测试"
+        self.group_icon = FluentIcon.BOOK_SHELF
+        self.visible = True
+
+    def run(self):
+        trade_task = self.executor.get_task_by_class(MapTradeTask)
+        if trade_task is None:
+            self.log_warning("未找到每日跑商任务，无法启动纯卖测试。")
+            return False
+        original_config = trade_task.config
+        self.info_set("状态", "正在执行当天纯卖，详细进度见每日跑商。")
+        # Use the same task instance so pending-sale evidence also applies to this entry point.
+        trade_task.config = ChainMap(
+            {"启用": True, "制作料理": False, "买": False, "卖": True},
+            original_config or {},
+        )
+        try:
+            trade_task.info_clear()
+            return trade_task.run()
+        finally:
+            trade_task.config = original_config
+            for key, value in trade_task.info_snapshot().items():
+                self.info_set(key, value)

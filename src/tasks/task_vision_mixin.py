@@ -7,7 +7,7 @@ from time import monotonic
 
 import cv2
 import numpy as np
-from ok.task.exceptions import TaskDisabledException
+from ok.task.exceptions import FinishedException, TaskDisabledException
 
 from src.tasks.map_trade.models import MatchResult, TemplateSpec
 from src.tasks.map_trade.vision import Vision
@@ -386,6 +386,7 @@ class TaskVisionMixin:
         interval: float = 0.35,
     ) -> bool:
         """主页确认超时后，自动点击右上角主页按钮把角色带回主页面再确认。"""
+        self._save_flow_diagnostic("home_confirmation_failed")
         self.log_info(f"{name}：未确认到主页，尝试自动返回主页。")
         if self.auto_return_main_home():
             return self._wait_for_home_confirmation(
@@ -478,7 +479,7 @@ class TaskVisionMixin:
                 log=False,
                 name=name,
             )
-        except TaskDisabledException:
+        except (TaskDisabledException, FinishedException):
             raise
         except Exception as exc:
             self.info_set(f"{name} OCR 错误", str(exc))

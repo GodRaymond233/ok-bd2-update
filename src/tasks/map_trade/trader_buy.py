@@ -40,6 +40,8 @@ BUY_ALL_FAVORITES_CLICK_AFTER_SLEEP = 0.3
 
 class BuyFlowMixin:
     def run_buy(self) -> bool:
+        from src.tasks import run_history
+
         stock_date = purchase_stock_date(self._current_market_time())
         self._status("购买库存日期", stock_date.isoformat())
         self.task.log_info(
@@ -59,8 +61,14 @@ class BuyFlowMixin:
         if purchase_state is None:
             return False
         if purchase_state[0] is None:
+            run_history.save_stage(self.task, "购买全部收藏", "done",
+                                   evidence={"stock_date": stock_date.isoformat()})
             self._buy_completed_in_current_shop = True
             return True
+        if run_history.read_stage(self.task, "购买全部收藏").get("state") == "pending":
+            completed = self.buy_all_favorites()
+            self._buy_completed_in_current_shop = completed
+            return completed
         rebuild_cycle = str(self.task.config.get("收藏重建周期", "每周"))
         every_run = rebuild_cycle == "每次"
         if rebuild_cycle == "永不":
@@ -83,7 +91,6 @@ class BuyFlowMixin:
         end_at = monotonic() + max(0.0, timeout)
         sold_out_hits = 0
         last_title = ""
-        last_match = None
         while True:
             frame = self.vision.capture()
             title = self.vision.ocr_text(
@@ -124,12 +131,8 @@ class BuyFlowMixin:
                 break
             self.task.sleep(BUY_TO_SELL_INTERVAL)
         score_text = (
-            "-"
-            if last_match is None
-            else (
-                f"m={last_match.score:.3f}, p={last_match.pixel_score:.3f}, "
-                f"z={last_match.zncc_score:.3f}"
-            )
+            f"m={last_match.score:.3f}, p={last_match.pixel_score:.3f}, "
+            f"z={last_match.zncc_score:.3f}"
         )
         self.task.log_warning(
             "卖：买后等待售罄模板稳定命中超时，未切换出售页，"
@@ -138,13 +141,27 @@ class BuyFlowMixin:
         return False
 
     def buy_all_favorites(self) -> bool:
+        from src.tasks import run_history
+
+        record = run_history.read_stage(self.task, "购买全部收藏")
         located = self._wait_for_buy_all_favorites_state()
         if located is None:
             self.task.log_warning("买：商店页面未稳定显示可购买按钮或售罄状态。")
             return False
         button_center, frame = located
         if button_center is None:
+            run_history.save_stage(self.task, "购买全部收藏", "done",
+                                   evidence={"result": "已售罄"})
             return True
+        if record.get("state") == "pending":
+            if self._wait_for_purchase_completion():
+                current = self._wait_for_buy_all_favorites_state()
+                if current is not None and current[0] is None:
+                    run_history.save_stage(self.task, "购买全部收藏", "done",
+                                           evidence={"result": "前次购买已核验售罄"})
+                    return True
+            self.task.log_warning("买：前次购买提交结果未知，售罄/完成未确认，禁止重复购买。")
+            return False
         self._status(
             "一键购买全部收藏按钮点击中心",
             f"center=({button_center[0]},{button_center[1]})",
@@ -161,6 +178,8 @@ class BuyFlowMixin:
             f"买：购买确认弹窗OCR完成，等待{BUY_CONFIRM_PRE_CLICK_DELAY:.1f}秒后点击确认。"
         )
         self.task.sleep(BUY_CONFIRM_PRE_CLICK_DELAY)
+        run_history.save_stage(self.task, "购买全部收藏", "pending",
+                               evidence={"target": "全部收藏"})
         self.task.operate_click(
             *BUY_CONFIRM_POINT,
             after_sleep=BUY_CONFIRM_POST_CLICK_DELAY,
@@ -171,6 +190,8 @@ class BuyFlowMixin:
             )
             return False
         self.task.log_info("买：已确认购买全部收藏商品。")
+        run_history.save_stage(self.task, "购买全部收藏", "done",
+                               evidence={"result": "购买完成已确认"})
         return True
 
     def _wait_for_purchase_completion(
@@ -183,22 +204,10 @@ class BuyFlowMixin:
         sold_out_hits = 0
         success_text_hits = 0
         last_text = ""
-        capture = getattr(self.vision, "capture", None)
-        match_fn = getattr(self.vision, "match", None)
-        passes_fn = getattr(self.vision, "passes", None)
-        simplify = getattr(self.vision, "simplify", lambda value: value)
-        if not callable(capture) or not callable(match_fn) or not callable(passes_fn):
-            return False
         while True:
-            frame = capture()
-            text = ""
-            ocr_text = getattr(self.vision, "ocr_text", None)
-            if callable(ocr_text):
-                try:
-                    text = ocr_text(frame, "购买完成确认", relative_roi=SHOP_MODE_TITLE_REGION)
-                except (AttributeError, TypeError, ValueError):
-                    text = ""
-            normalized = normalize_text(simplify(text))
+            frame = self.vision.capture()
+            text = self.vision.ocr_text(frame, "购买完成确认", relative_roi=SHOP_MODE_TITLE_REGION)
+            normalized = normalize_text(self.vision.simplify(text))
             last_text = text or last_text
             if any(keyword in normalized for keyword in ("购买成功", "购买完成", "已购买")):
                 success_text_hits += 1
@@ -210,8 +219,8 @@ class BuyFlowMixin:
                     return True
             else:
                 success_text_hits = 0
-            match = match_fn(frame, BUY_TO_SELL_SOLD_OUT_TEMPLATE)
-            passed = passes_fn(match, BUY_TO_SELL_SOLD_OUT_TEMPLATE)
+            match = self.vision.match(frame, BUY_TO_SELL_SOLD_OUT_TEMPLATE)
+            passed = self.vision.passes(match, BUY_TO_SELL_SOLD_OUT_TEMPLATE)
             sold_out_hits = sold_out_hits + 1 if passed else 0
             self._status(
                 "购买完成售罄确认",
@@ -237,8 +246,6 @@ class BuyFlowMixin:
         consecutive_hits = 0
         sold_out_hits = 0
         last_text = ""
-        last_center: tuple[int, int] | None = None
-        last_frame: np.ndarray | None = None
         expected = normalize_text(self.vision.simplify(BUY_ALL_FAVORITES_KEYWORD))
         while True:
             frame = self.vision.capture()
@@ -280,22 +287,14 @@ class BuyFlowMixin:
             # 售罄时按钮仍可能显示，任一售罄帧都必须阻止按钮点击。
             if matched_center is not None and not sold_out_passed:
                 consecutive_hits += 1
-                last_center = matched_center
-                last_frame = frame
             else:
                 consecutive_hits = 0
-                last_center = None
-                last_frame = None
             self._status(
                 "一键购买全部收藏按钮 OCR稳定",
                 f"{consecutive_hits}/{BUY_ALL_FAVORITES_STABLE_HITS}",
             )
-            if (
-                consecutive_hits >= BUY_ALL_FAVORITES_STABLE_HITS
-                and last_center is not None
-                and last_frame is not None
-            ):
-                return last_center, last_frame
+            if consecutive_hits >= BUY_ALL_FAVORITES_STABLE_HITS:
+                return matched_center, frame
             if monotonic() >= end_at:
                 break
             self.task.sleep(BUY_ALL_FAVORITES_INTERVAL)
