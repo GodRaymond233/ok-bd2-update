@@ -51,7 +51,6 @@ from src.tasks.map_trade.navigator_constants import (
     AUTO_MOVE_CANCEL_ATTEMPTS,
     AUTO_MOVE_CANCEL_REFERENCE_POINT,
     AUTO_MOVE_IDLE_READS,
-    FIELD_EXTRA_KEYCAP_TEMPLATES,
     FIELD_MAP_CLOSE_TIMEOUT,
     HAND_TEMPLATE,
     HUNTING_GROUND_NAV_ENTRY,
@@ -130,6 +129,10 @@ from src.tasks.map_trade.vision import normalize_text
 from src.utils.calibration import FHD_1080
 
 FIELD_NAV_MENU_REFERENCE_POINT = (288, 112)
+PORTAL_INTERACTION_ATTEMPTS = 3
+NAV_MENU_OPEN_ATTEMPTS = 3
+NAV_DESTINATION_ATTEMPTS = 3
+NAV_MENU_ENTRY_ALIASES = {"狩猎场": ("狩猎", "猎场")}
 
 
 class SandboxNavigationMixin:
@@ -605,6 +608,7 @@ class SandboxNavigationMixin:
         except Exception as exc:
             self._status("箱庭徒步导航传送阵菜单 OCR错误", str(exc))
             return False
+        candidates = []
         for box in boxes:
             label = normalize_text(
                 self.vision.simplify(str(getattr(box, "name", "")))
@@ -615,14 +619,14 @@ class SandboxNavigationMixin:
             center = self._ocr_box_center(box)
             if center is None:
                 continue
-            self.vision.click_client(
-                center,
-                frame.shape,
-                after_sleep=SANDBOX_NAVIGATION_OCR_INTERVAL,
-            )
-            self._status("箱庭徒步导航传送阵菜单", f"点击魔法阵中心={center}")
-            return True
-        return False
+            candidates.append(center)
+        if len(candidates) != 1:
+            return False
+        self.vision.click_client(
+            candidates[0], frame.shape, after_sleep=SANDBOX_NAVIGATION_OCR_INTERVAL,
+        )
+        self._status("箱庭徒步导航传送阵菜单", f"点击魔法阵中心={candidates[0]}")
+        return True
 
     def _click_sandbox_navigation_destination_confirmation(
         self,
@@ -665,7 +669,7 @@ class SandboxNavigationMixin:
     def _walk_to_sandbox_teleport_interaction(self) -> NavigationResult:
         """Use the sandbox navigation map to walk back to a portal interaction prompt."""
 
-        self._status("导航状态", "传送阵技能失败，转入导航/徒步回退")
+        self._status("导航状态", "确认当前位置，徒步前往传送阵")
         state = self.wait_state(
             {ScreenState.SANDBOX, ScreenState.SANDBOX_MAP},
             SANDBOX_NAVIGATION_CONFIRM_TIMEOUT,
@@ -799,11 +803,7 @@ class SandboxNavigationMixin:
                 ScreenState.SANDBOX,
                 "徒步回退后仍未识别到传送阵交互按钮",
             )
-        return self._wait_for_sandbox_map_open(
-            "徒步回退交互",
-            expected_mode=MapPageMode.DIRECT_TELEPORT,
-            detect_skill_failure=False,
-        )
+        return self._confirm_portal_interaction("徒步回退交互")
 
     @staticmethod
     def _sandbox_same_action_identity(
@@ -971,22 +971,23 @@ class SandboxNavigationMixin:
     def open_teleport_map_from_sandbox(self) -> NavigationResult:
         """Open the teleport map through interaction first, then skill fallback."""
 
+        frame = self.vision.capture()
+        detection = self._detect_map_page_mode(frame)
+        if detection.mode.is_teleport_map:
+            return NavigationResult(
+                True, ScreenState.AREA_MAP, "已确认当前传送地图",
+                map_page_mode=detection.mode,
+            )
+        ready = self._restore_navigation_field()
+        if not ready.success:
+            return ready
         self._status("导航状态", "优先识别箱庭传送阵交互按钮")
         if self._click_sandbox_teleport_interaction():
-            opened = self._wait_for_sandbox_map_open(
-                "传送阵交互按钮",
-                expected_mode=MapPageMode.DIRECT_TELEPORT,
-                detect_skill_failure=False,
-            )
-            if opened.success:
-                return opened
-            return NavigationResult(
-                False,
-                opened.state,
-                f"点击传送阵交互按钮后未确认传送阵地图：{opened.message}",
-                map_page_mode=opened.map_page_mode,
-            )
+            return self._confirm_portal_interaction("传送阵交互按钮")
 
+        ready = self._restore_navigation_field()
+        if not ready.success:
+            return ready
         self._status("导航状态", "未识别交互按钮，回退识别箱庭5号传送阵技能")
         if not self._click_sandbox_teleport_skill():
             return NavigationResult(
@@ -1018,6 +1019,48 @@ class SandboxNavigationMixin:
             fallback.state,
             f"{opened.message}；导航/徒步回退失败：{fallback.message}",
             map_page_mode=fallback.map_page_mode,
+        )
+
+    def _restore_navigation_field(self) -> NavigationResult:
+        """恢复可确认的地图页面，未知页面不执行返回或技能动作。"""
+        frame = self.vision.capture()
+        detection = self._detect_map_page_mode(frame)
+        if detection.mode != MapPageMode.UNKNOWN:
+            return self._close_confirmed_map_page(
+                {detection.mode}, timeout=SANDBOX_NAVIGATION_CONFIRM_TIMEOUT,
+            )
+        state = self.classify(frame)
+        if state not in {ScreenState.SANDBOX, ScreenState.LOADING} and not self._black_frame(frame):
+            return NavigationResult(
+                False, ScreenState.UNKNOWN, "导航恢复前未确认箱庭或地图，未执行点击",
+            )
+        return self._wait_for_current_sandbox(timeout=SANDBOX_NAVIGATION_CONFIRM_TIMEOUT)
+
+    def _confirm_portal_interaction(self, trigger_name: str) -> NavigationResult:
+        """每次交互都确认直传页，只在恢复箱庭后重试当前手势。"""
+        for attempt in range(PORTAL_INTERACTION_ATTEMPTS):
+            opened = self._wait_for_sandbox_map_open(
+                trigger_name, expected_mode=MapPageMode.DIRECT_TELEPORT,
+                detect_skill_failure=False,
+            )
+            if opened.success:
+                return opened
+            ready = self._restore_navigation_field()
+            if not ready.success:
+                return NavigationResult(
+                    False, ready.state, f"{opened.message}；{ready.message}",
+                    map_page_mode=ready.map_page_mode,
+                )
+            if attempt + 1 == PORTAL_INTERACTION_ATTEMPTS:
+                break
+            self._status(
+                "导航状态",
+                f"传送页未确认，重新识别交互按钮（{attempt + 2}/{PORTAL_INTERACTION_ATTEMPTS}）",
+            )
+            if not self._click_sandbox_teleport_interaction():
+                break
+        return NavigationResult(
+            False, ScreenState.SANDBOX, f"{opened.message}；交互重试结束，已恢复箱庭",
         )
 
     def _teleport_generation_boxes(
@@ -1133,26 +1176,50 @@ class SandboxNavigationMixin:
     ) -> NavigationResult:
         """Close one strictly identified map page, then re-confirm the sandbox."""
 
-        frame = self.vision.capture()
-        detection = self._detect_map_page_mode(frame)
-        if detection.mode not in expected_modes:
-            expected = ",".join(sorted(mode.value for mode in expected_modes))
-            return NavigationResult(
-                False,
-                self._screen_state_for_map_page_mode(detection.mode),
-                (
+        budget = self._loading_timeout() if timeout is None else max(0.0, float(timeout))
+        end_at = monotonic() + budget
+        for attempt in range(2):
+            frame = self.vision.capture()
+            detection = self._detect_map_page_mode(frame)
+            if attempt == 0 and detection.mode not in expected_modes:
+                if (
+                    detection.mode == MapPageMode.UNKNOWN
+                    and self.classify(frame) == ScreenState.SANDBOX
+                ):
+                    if card_number is None:
+                        return self._wait_for_current_sandbox(timeout=budget)
+                    return self._wait_for_story_sandbox(int(card_number), timeout=budget)
+                return NavigationResult(
+                    False, self._screen_state_for_map_page_mode(detection.mode),
                     "关闭前地图页面身份不符，未执行点击："
-                    f"expected={expected}, observed={detection.mode.value}"
-                ),
-                map_page_mode=detection.mode,
-            )
+                    f"observed={detection.mode.value}", map_page_mode=detection.mode,
+                )
+            if detection.mode in expected_modes:
+                self._click_map_return(frame, detection.mode)
+            remaining = max(0.0, end_at - monotonic())
+            wait = min(2.0, remaining) if attempt == 0 else remaining
+            if card_number is None:
+                confirmed = self._wait_for_current_sandbox(timeout=wait)
+            else:
+                confirmed = self._wait_for_story_sandbox(int(card_number), timeout=wait)
+            if confirmed.success:
+                return NavigationResult(True, ScreenState.SANDBOX, "地图页面已关闭并稳定确认箱庭")
+            if monotonic() >= end_at:
+                break
+        return NavigationResult(
+            False, confirmed.state,
+            f"关闭地图页面后未确认箱庭：{confirmed.message}",
+            map_page_mode=detection.mode,
+        )
 
+    def _click_map_return(self, frame: np.ndarray, mode: MapPageMode) -> None:
+        """由同帧地图身份选择返回控件。"""
         back = self.vision.match(frame, AREA_MAP_BACK_TEMPLATE)
         if self.vision.passes(back, AREA_MAP_BACK_TEMPLATE):
             self._status(
                 "地图页面返回按钮",
                 (
-                    f"mode={detection.mode.value}; center={back.center}; "
+                    f"mode={mode.value}; center={back.center}; "
                     f"match={back.score:.3f}, pixel={back.pixel_score:.3f}, "
                     f"zncc={back.zncc_score:.3f}"
                 ),
@@ -1163,7 +1230,7 @@ class SandboxNavigationMixin:
                 after_sleep=SANDBOX_MAP_SETTLE_SECONDS,
             )
         else:
-            if detection.mode == MapPageMode.SANDBOX_LARGE_MAP:
+            if mode == MapPageMode.SANDBOX_LARGE_MAP:
                 reference = SANDBOX_LARGE_MAP_RETURN_REFERENCE_POINT
                 relative = SANDBOX_LARGE_MAP_RETURN_RELATIVE_POINT
             else:
@@ -1172,7 +1239,7 @@ class SandboxNavigationMixin:
             self._status(
                 "地图页面返回按钮",
                 (
-                    f"mode={detection.mode.value}; 模板未通过，仅在严格身份确认后使用"
+                    f"mode={mode.value}; 模板未通过，仅在严格身份确认后使用"
                     f"标定点({reference[0]},{reference[1]})"
                 ),
             )
@@ -1180,21 +1247,6 @@ class SandboxNavigationMixin:
                 *relative,
                 after_sleep=SANDBOX_MAP_SETTLE_SECONDS,
             )
-
-        if card_number is None:
-            confirmed = self._wait_for_current_sandbox(timeout=float(timeout or 8.0))
-        elif timeout is None:
-            confirmed = self._wait_for_story_sandbox(int(card_number))
-        else:
-            confirmed = self._wait_for_story_sandbox(int(card_number), timeout=timeout)
-        if confirmed.success:
-            return NavigationResult(True, ScreenState.SANDBOX, "地图页面已关闭并稳定确认箱庭")
-        return NavigationResult(
-            False,
-            confirmed.state,
-            f"关闭地图页面后未确认箱庭：{confirmed.message}",
-            map_page_mode=detection.mode,
-        )
 
     def return_teleport_map_to_sandbox(self, card_number: int) -> NavigationResult:
         """Close a confirmed teleport page and re-confirm the requested story sandbox."""
@@ -1432,10 +1484,11 @@ class SandboxNavigationMixin:
         self,
         card: CardSpec,
         timeout: float = TELEPORT_MAP_OPEN_TIMEOUT,
-        allow_unresolved: bool = False,
     ) -> AreaMapContext | NavigationResult:
+        """Confirm a route target or a stable transit page before seeking a target."""
         end_at = monotonic() + max(0.0, timeout)
         last = None
+        previous = None
         while monotonic() <= end_at:
             last = self._capture_area_map_context(card)
             if last.is_area_map:
@@ -1448,11 +1501,15 @@ class SandboxNavigationMixin:
                 if last.resolved_target_key is not None:
                     return last
                 if (
-                    allow_unresolved
-                    and bool(last.normalized_text)
-                    and (last.left_arrow is not None or last.right_arrow is not None)
+                    last.normalized_text
+                    and previous is not None
+                    and last.normalized_text == previous.normalized_text
+                    and last.map_page_mode == previous.map_page_mode
                 ):
                     return last
+                previous = last
+            else:
+                previous = None
             self.task.sleep(AREA_MAP_CHANGE_INTERVAL)
         return NavigationResult(
             False,
@@ -1579,33 +1636,45 @@ class SandboxNavigationMixin:
                     True, ScreenState.SANDBOX, f"经{npc}到达{card.targets[0].title}"
                 )
             self._status("导航状态", f"经{npc}未到{card.targets[0].title}，改用原来的回城方式")
+        portal_failure = ""
         if via_hunting_ground:
-            entry = None
+            opened = None
             if self._click_sandbox_teleport_interaction():
-                # Already on a teleport circle: its map reaches the town
-                # directly, no need for the hunting ground.
-                opened = self._wait_for_sandbox_map_open(
-                    "传送阵交互按钮",
-                    expected_mode=MapPageMode.DIRECT_TELEPORT,
-                    detect_skill_failure=False,
-                )
-            elif (entry := self._travel_to_hunting_ground()) == HUNTING_GROUND_NAV_ENTRY:
-                opened = self.open_teleport_map_from_sandbox()
-            elif entry is not None:
-                # 导航到城镇 NPC 后可能已在路线起点，先确认位置。
-                if self.current_collection_target(card) == card.targets[0].key:
-                    return NavigationResult(
-                        True, ScreenState.SANDBOX, f"经{entry}到达{card.targets[0].title}"
-                    )
-                opened = self._open_teleport_map_anywhere(card)
-            else:
-                # 菜单入口不可用时，通过当前地图的传送阵恢复。
-                opened = self._open_teleport_map_anywhere(card)
+                opened = self._confirm_portal_interaction("传送阵交互按钮")
+                if not opened.success:
+                    portal_failure = opened.message
+                    ready = self._restore_navigation_field()
+                    if not ready.success:
+                        return NavigationResult(
+                            False, ready.state, f"{portal_failure}；{ready.message}",
+                            map_page_mode=ready.map_page_mode,
+                        )
+                    self._status("导航状态", f"原地交互未确认传送页，改用导航：{portal_failure}")
+            if opened is None or not opened.success:
+                entry = self._travel_to_hunting_ground()
+                if entry == HUNTING_GROUND_NAV_ENTRY:
+                    opened = self.open_teleport_map_from_sandbox()
+                else:
+                    # 导航到城镇 NPC 后可能已在路线起点，先确认位置。
+                    if (
+                        entry is not None
+                        and self.current_collection_target(card) == card.targets[0].key
+                    ):
+                        return NavigationResult(
+                            True, ScreenState.SANDBOX, f"经{entry}到达{card.targets[0].title}"
+                        )
+                    opened = self._open_teleport_map_anywhere(card)
         else:
             opened = self._open_teleport_map_anywhere(card)
         if not opened.success:
+            if portal_failure:
+                return NavigationResult(
+                    False, opened.state,
+                    f"原地交互失败：{portal_failure}；导航/徒步回退失败：{opened.message}",
+                    map_page_mode=opened.map_page_mode,
+                )
             return opened
-        context = self._wait_for_collection_teleport_map(card, allow_unresolved=True)
+        context = self._wait_for_collection_teleport_map(card)
         if isinstance(context, NavigationResult):
             return context
         if context.map_page_mode != opened.map_page_mode:
@@ -1846,7 +1915,7 @@ class SandboxNavigationMixin:
         )
 
     def wait_for_collection_field(self, frame=None) -> np.ndarray:
-        """Pause skill preparation through an encounter, then re-confirm the field."""
+        """Recover encounters before accepting a stationary collection field."""
         frame = self.vision.capture() if frame is None else frame
         end_at = monotonic() + self._loading_timeout()
         battle_seen = False
@@ -1856,18 +1925,14 @@ class SandboxNavigationMixin:
             if self._black_frame(frame):
                 idle = 0
             else:
-                turn_text = self.vision.ocr_text(
-                    frame, "采集遭遇战回合",
-                    relative_roi=FIELD_BATTLE_TURN_RELATIVE_ROI,
-                )
-                if re.search(r"\bTURN[\s.]*\d+\b", turn_text, re.IGNORECASE):
+                if self._field_battle_visible(frame):
                     if not battle_seen:
                         end_at = monotonic() + FIELD_BATTLE_TIMEOUT
                         battle_seen = True
                     idle = 0
-                    self._status("导航状态", "遭遇战进行中，等待当前自动战斗结束")
+                    return self._retreat_from_field_battle(frame, end_at=end_at, stop_walk=True)
                 elif self.classify(frame) == ScreenState.SANDBOX:
-                    if self._walk_state(frame) == "idle":
+                    if self._walk_state(frame, field_confirmed=True) == "idle":
                         idle += 1
                         if not waiting or idle >= AUTO_MOVE_IDLE_READS:
                             return frame
@@ -1886,6 +1951,115 @@ class SandboxNavigationMixin:
         message = "遭遇战恢复超时" if battle_seen else "采集前箱庭确认超时"
         raise RuntimeError(f"{message}，未确认返回静止箱庭，停止采集技能操作")
 
+    def _field_battle_visible(self, frame: np.ndarray) -> bool:
+        text = self.vision.ocr_text(
+            frame, "采集遭遇战回合", relative_roi=FIELD_BATTLE_TURN_RELATIVE_ROI,
+        )
+        return re.search(r"\bTURN[\s.]*\d+\b", text, re.IGNORECASE) is not None
+
+    def _field_retreat_action(self, boxes):
+        """Resolve escape controls by their dialog/menu row, excluding headings."""
+        text = normalize_text(" ".join(str(box.name) for box in boxes))
+        controls = []
+        for box in boxes:
+            center = self._ocr_box_center(box)
+            height = float(getattr(box, "height", 0) or 0)
+            if center is not None and height > 0:
+                controls.append((normalize_text(str(box.name)), center, height))
+        escapes = [control for control in controls if control[0] == "逃跑"]
+        cancels = [control for control in controls if control[0] == "取消"]
+
+        def same_row(left, right):
+            return (
+                right[1][0] > left[1][0]
+                and abs(right[1][1] - left[1][1]) <= max(left[2], right[2]) * 0.6
+            )
+
+        question = "放弃战斗逃跑" in text
+        if question or cancels:
+            candidates = [
+                escape[1] for cancel in cancels for escape in escapes
+                if question and same_row(cancel, escape)
+            ]
+            stage = "confirm"
+        else:
+            companions = [control for control in controls if control[0] in {"重新挑战", "点击继续"}]
+            candidates = [
+                escape[1] for escape in escapes
+                if len(escapes) == 1 and any(control[0] == "暂停" for control in controls)
+                and any(same_row(escape, companion) for companion in companions)
+            ]
+            stage = "escape"
+        return (stage, candidates[0]) if len(candidates) == 1 else (None, None)
+
+    def _retreat_from_field_battle(
+        self, frame: np.ndarray, *, end_at: float | None = None, stop_walk: bool = False,
+    ) -> np.ndarray:
+        """Follow pause, escape and its confirmation using fresh observations."""
+        deadline = monotonic() + FIELD_RETREAT_TIMEOUT
+        end_at = deadline if end_at is None else min(end_at, deadline)
+        attempts = {"pause": 0, "escape": 0, "confirm": 0}
+        confirmed = False
+        field_hits = 0
+        while monotonic() <= end_at:
+            if not self._black_frame(frame):
+                if confirmed and self.classify(frame) == ScreenState.SANDBOX:
+                    walk = self._walk_state(frame, field_confirmed=True) if stop_walk else "idle"
+                    field_hits = field_hits + 1 if walk == "idle" else 0
+                    if field_hits >= AUTO_MOVE_IDLE_READS:
+                        return frame
+                    if walk == "moving":
+                        self._cancel_walk()
+                    self.task.sleep(0.15)
+                    frame = self.vision.capture()
+                    continue
+                boxes = self.vision.ocr_boxes(frame, "采集战斗逃跑")
+                exits = [
+                    point for box in boxes
+                    if normalize_text(str(box.name)) == "逃跑"
+                    and (point := self._ocr_box_center(box)) is not None
+                ]
+                stage, point = self._field_retreat_action(boxes)
+                if stage == "escape" and confirmed:
+                    stage, point = None, None
+                if (
+                    stage is None and not exits and not confirmed
+                    and self._field_battle_visible(frame)
+                ):
+                    stage = "pause"
+                    point = (
+                        round(frame.shape[1] * FIELD_BATTLE_PAUSE_POINT[0]),
+                        round(frame.shape[0] * FIELD_BATTLE_PAUSE_POINT[1]),
+                    )
+                if stage is not None:
+                    field_hits = 0
+                    if attempts[stage] >= FIELD_RETREAT_ATTEMPTS:
+                        raise RuntimeError(f"遭遇战退出失败：{stage}点击后未确认切页，停止采集")
+                    attempts[stage] += 1
+                    self._status("导航状态", {
+                        "pause": "遭遇战：打开暂停菜单",
+                        "escape": "遭遇战：点击逃跑",
+                        "confirm": "遭遇战：确认逃跑",
+                    }[stage])
+                    self.vision.click_client(point, frame.shape, after_sleep=1.0)
+                    if stage == "confirm":
+                        confirmed = True
+                elif not exits and self.classify(frame) == ScreenState.SANDBOX:
+                    walk = self._walk_state(frame, field_confirmed=True) if stop_walk else "idle"
+                    field_hits = field_hits + 1 if walk == "idle" else 0
+                    if field_hits >= AUTO_MOVE_IDLE_READS:
+                        return frame
+                    if walk == "moving":
+                        self._cancel_walk()
+                else:
+                    field_hits = 0
+                    self._leave_walk_battle_result(frame)
+            else:
+                field_hits = 0
+            self.task.sleep(0.5)
+            frame = self.vision.capture()
+        raise RuntimeError("遭遇战退出超时，未确认返回箱庭，停止采集")
+
     def _wait_for_field_hud(
         self,
         *,
@@ -1897,7 +2071,7 @@ class SandboxNavigationMixin:
     ) -> NavigationResult:
         """通过连续箱庭 HUD 画面确认入场，不依赖玩家的技能分组。
 
-        技能栏由采集步骤单独识别；本步骤只负责场景、加载和移动状态。
+        技能栏由采集步骤单独识别；入场遭遇战恢复后仍须确认箱庭。
         """
         stall = max(0.0, timeout)
         end_at = monotonic() + stall
@@ -1907,10 +2081,24 @@ class SandboxNavigationMixin:
         last_state = ScreenState.UNKNOWN
         while monotonic() <= end_at:
             frame = self.vision.capture()
+            loading = frame is not None and self._black_frame(frame)
+            if (
+                handle_intermediate and frame is not None and not loading
+                and self._field_battle_visible(frame)
+            ):
+                try:
+                    self._retreat_from_field_battle(
+                        frame, end_at=monotonic() + FIELD_RETREAT_TIMEOUT, stop_walk=True,
+                    )
+                except (TaskDisabledException, FinishedException):
+                    raise
+                except RuntimeError as exc:
+                    return NavigationResult(False, ScreenState.UNKNOWN, f"{failure_message}；{exc}")
+                return NavigationResult(True, ScreenState.SANDBOX, success_message)
             # 黑屏加载帧直接分类，省去主页和箱庭识别开销。
             last_state = (
                 ScreenState.LOADING
-                if frame is not None and self._black_frame(frame)
+                if loading
                 else self.classify(frame)
             )
             self._status("导航状态", last_state.value)
@@ -1971,7 +2159,7 @@ class SandboxNavigationMixin:
             return False, False
         return "移动中" in text, self._walk_caught(text)
 
-    def _walk_state(self, frame: np.ndarray) -> str:
+    def _walk_state(self, frame: np.ndarray, *, field_confirmed: bool = False) -> str:
         """Return caught/moving/idle; unreadable or non-field observations stay unknown."""
         text = self._walk_text(frame)
         if text is None:
@@ -1980,7 +2168,9 @@ class SandboxNavigationMixin:
             return "caught"
         if "移动中" in text:
             return "moving"
-        return "idle" if self.classify(frame) == ScreenState.SANDBOX else "unknown"
+        if field_confirmed or self.classify(frame) == ScreenState.SANDBOX:
+            return "idle"
+        return "unknown"
 
     def _auto_moving(self, frame: np.ndarray) -> bool:
         """"自动移动中" shows: the game is walking the character somewhere."""
@@ -2003,7 +2193,10 @@ class SandboxNavigationMixin:
             else:
                 idle = 0
                 if state == "unknown":
-                    self._leave_walk_battle_result(frame)
+                    if self._field_battle_visible(frame):
+                        self._retreat_from_field_battle(frame, end_at=end_at)
+                    else:
+                        self._leave_walk_battle_result(frame)
                 self._status("导航状态", "自动移动中，等待走到传送阵")
             self.task.sleep(0.5)
         return "timeout"
@@ -2034,7 +2227,10 @@ class SandboxNavigationMixin:
                 else:
                     # A loading screen with art (not black), a dialog...
                     idle = 0
-                    self._leave_walk_battle_result(frame)
+                    if self._field_battle_visible(frame):
+                        self._retreat_from_field_battle(frame, end_at=end_at)
+                    else:
+                        self._leave_walk_battle_result(frame)
             self.task.sleep(0.5)
         self._status("导航状态", f"自动移动{timeout:.0f}秒仍未结束，停止本次徒步")
         return False
@@ -2185,6 +2381,9 @@ class SandboxNavigationMixin:
         opened = self.open_teleport_map_from_sandbox()
         if opened.success:
             return opened
+        ready = self._restore_navigation_field()
+        if not ready.success:
+            return NavigationResult(False, ready.state, f"{opened.message}；{ready.message}")
         neighbour = self._walk_to_circle_neighbour(card)
         if neighbour is not None:
             return neighbour
@@ -2199,17 +2398,13 @@ class SandboxNavigationMixin:
             return NavigationResult(
                 False, walked.state,
                 f"{opened.message}；徒步前往传送阵失败：{walked.message}；"
-                "导航菜单也未能前往狩猎场或艾琳",
+                f"导航菜单也未能前往狩猎场或艾琳：{self._navigation_failure}",
             )
         if entry == HUNTING_GROUND_NAV_ENTRY:
             return self.open_teleport_map_from_sandbox()
         # 艾琳 stands in the town: its circle, walking there if needed.
         if self._click_sandbox_teleport_interaction():
-            return self._wait_for_sandbox_map_open(
-                "传送阵交互按钮",
-                expected_mode=MapPageMode.DIRECT_TELEPORT,
-                detect_skill_failure=False,
-            )
+            return self._confirm_portal_interaction("传送阵交互按钮")
         walked = self._walk_to_sandbox_teleport_interaction()
         if walked.success:
             return walked
@@ -2240,28 +2435,55 @@ class SandboxNavigationMixin:
         any walk after it) ends.  The entry travelled to, or None."""
 
         wanted = "、".join(entries)
-        if not self.vision.click_template(
-            MERCHANT_NAV_GUIDE_TEMPLATE, timeout=MERCHANT_NAV_GUIDE_TIMEOUT, after_sleep=0.8
-        ):
+        self._navigation_failure = ""
+        ready = self._restore_navigation_field()
+        if not ready.success:
+            self._navigation_failure = ready.message
+            return None
+        choice = None
+        for attempt in range(NAV_MENU_OPEN_ATTEMPTS):
+            if not self.vision.click_template(
+                MERCHANT_NAV_GUIDE_TEMPLATE, timeout=MERCHANT_NAV_GUIDE_TIMEOUT, after_sleep=0.8
+            ):
+                frame = self.vision.capture()
+                if self.classify(frame) != ScreenState.SANDBOX:
+                    self._navigation_failure = "未确认箱庭导航入口，未执行点击"
+                    break
+                self.task.operate_click(
+                    FIELD_NAV_MENU_REFERENCE_POINT[0] / FHD_1080.width,
+                    FIELD_NAV_MENU_REFERENCE_POINT[1] / FHD_1080.height,
+                    after_sleep=0.8,
+                )
+            choice = self._nav_menu_choice(entries)
+            if choice is not None:
+                break
+            # 菜单按钮是开关；列表文字仍在时不能再次点击入口。
             frame = self.vision.capture()
-            if not all(
-                self.vision.passes(self.vision.match(frame, spec), spec)
-                for spec in FIELD_EXTRA_KEYCAP_TEMPLATES
-            ) and self.classify(frame) != ScreenState.SANDBOX:
-                self.task.log_warning(f"跑图：未识别到小地图导航按钮，无法前往{wanted}。")
-                return None
-            self.task.operate_click(
-                FIELD_NAV_MENU_REFERENCE_POINT[0] / FHD_1080.width,
-                FIELD_NAV_MENU_REFERENCE_POINT[1] / FHD_1080.height,
-                after_sleep=0.8,
-            )
-        choice = self._nav_menu_choice(entries)
+            _, menu_text = self._nav_menu_entries(frame, entries, ocr_scale=2.0)
+            if menu_text:
+                break
+            guide = self.vision.match(frame, MERCHANT_NAV_GUIDE_TEMPLATE)
+            if not self.vision.passes(guide, MERCHANT_NAV_GUIDE_TEMPLATE):
+                break
+            self._status("导航状态", f"导航列表未打开（{attempt + 1}/{NAV_MENU_OPEN_ATTEMPTS}）")
         if choice is None:
-            self.task.log_warning(f"跑图：导航菜单里没有{wanted}。")
+            self._navigation_failure = self._navigation_failure or f"导航菜单未稳定读到{wanted}"
+            self.task.log_warning(f"跑图：{self._navigation_failure}。")
             return None
         entry, point, shape = choice
-        self.vision.click_client(point, shape, after_sleep=0.8)
-        if self._confirm_travel() in {"stuck", "unreachable"}:
+        for attempt in range(NAV_DESTINATION_ATTEMPTS):
+            self.vision.click_client(point, shape, after_sleep=0.8)
+            outcome = self._confirm_travel(entry)
+            if outcome != "menu":
+                break
+            if attempt + 1 == NAV_DESTINATION_ATTEMPTS:
+                break
+            choice = self._nav_menu_choice((entry,))
+            if choice is None:
+                break
+            _, point, shape = choice
+        if outcome != "moving":
+            self._navigation_failure = f"前往{entry}确认失败：{outcome}"
             return None
         arrived = self._wait_for_field_hud(
             timeout=self._loading_timeout(),
@@ -2270,12 +2492,14 @@ class SandboxNavigationMixin:
             failure_message=f"前往{entry}后未确认箱庭",
         ).success
         if not arrived:
+            self._navigation_failure = f"前往{entry}后未确认箱庭"
             return None
         # An NPC entry walks on to the NPC after the loading screen.
         walk_state = self._wait_auto_move_finished(SANDBOX_NAVIGATION_WALK_TIMEOUT)
         if walk_state == "caught":
             self._stop_caught_walk()
         if walk_state != "done":
+            self._navigation_failure = f"前往{entry}的自动移动未完成：{walk_state}"
             return None
         return entry
 
@@ -2287,29 +2511,53 @@ class SandboxNavigationMixin:
         entry shows, so a menu still sliding in cannot hide 狩猎场."""
 
         end_at = monotonic() + MERCHANT_NAV_MENU_OCR_TIMEOUT
-        seen = False
+        previous = {}
         while True:
             frame = self.vision.capture()
-            listed: dict[str, tuple[int, int]] = {}
-            texts = []
-            for box in self.vision.ocr_boxes(frame, "导航菜单", MERCHANT_NAV_MENU_OCR_ROI):
-                text = normalize_text(self.vision.simplify(str(getattr(box, "name", ""))))
-                center = self._ocr_box_center(box)
-                if not text or center is None:
-                    continue
-                texts.append(text)
-                for entry in entries:
-                    if entry in text:
-                        listed.setdefault(entry, center)
+            listed, texts = self._nav_menu_entries(frame, entries)
             self._status("导航菜单", " ".join(texts) or "-")
             timed_out = monotonic() >= end_at
-            if listed and (seen or timed_out):
-                entry = next(item for item in entries if item in listed)
-                return entry, listed[entry], frame.shape
+            if timed_out and not listed:
+                listed, texts = self._nav_menu_entries(frame, entries, ocr_scale=2.0)
+            for entry in entries:
+                if entry in listed and entry in previous:
+                    delta = max(abs(a - b) for a, b in zip(listed[entry], previous[entry]))
+                    if delta <= frame.shape[1] * 0.01:
+                        return entry, listed[entry], frame.shape
             if timed_out:
+                # 放大后仍需独立新帧确认，不能凭最后一次单帧文字点击。
+                if listed:
+                    next_frame = self.vision.capture()
+                    confirmed, _ = self._nav_menu_entries(next_frame, entries, ocr_scale=2.0)
+                    for entry in entries:
+                        if entry in listed and entry in confirmed and max(
+                            abs(a - b) for a, b in zip(listed[entry], confirmed[entry])
+                        ) <= next_frame.shape[1] * 0.01:
+                            return entry, confirmed[entry], next_frame.shape
+                seen_text = " ".join(texts) or "无文字"
+                self._navigation_failure = f"导航菜单未读到唯一稳定目的地：{seen_text}"
                 return None
-            seen = bool(listed)
+            previous = listed
             self.task.sleep(MERCHANT_NAV_MENU_OCR_INTERVAL)
+
+    def _nav_menu_entries(self, frame, entries: tuple[str, ...], *, ocr_scale: float = 1.0):
+        candidates = {entry: [] for entry in entries}
+        texts = []
+        for box in self.vision.ocr_boxes(
+            frame, "导航菜单", MERCHANT_NAV_MENU_OCR_ROI, ocr_scale=ocr_scale,
+        ):
+            text = normalize_text(self.vision.simplify(str(getattr(box, "name", ""))))
+            center = self._ocr_box_center(box)
+            if not text or center is None:
+                continue
+            texts.append(text)
+            for entry in entries:
+                if text == entry or (
+                    len(text) <= len(entry)
+                    and any(alias in text for alias in NAV_MENU_ENTRY_ALIASES.get(entry, ()))
+                ):
+                    candidates[entry].append(center)
+        return {entry: points[0] for entry, points in candidates.items() if len(points) == 1}, texts
 
     def _field_map_header(self, frame=None) -> str:
         return normalize_text(
@@ -2339,28 +2587,9 @@ class SandboxNavigationMixin:
             self.task.sleep(0.4)
 
     def _close_field_map(self) -> bool:
-        """Confirm the field after closing; retry once only on repeated map evidence."""
-        self.task.operate_click(*SANDBOX_LARGE_MAP_RETURN_RELATIVE_POINT, after_sleep=1.0)
-        end_at = monotonic() + FIELD_MAP_CLOSE_TIMEOUT
-        open_hits = 0
-        reclicked = False
-        while True:
-            frame = self.vision.capture()
-            header = self._field_map_header(frame)
-            is_map_open = "战斗" in header or "安全" in header
-            if not is_map_open and self.classify(frame) == ScreenState.SANDBOX:
-                return True
-            open_hits = open_hits + 1 if is_map_open else 0
-            if monotonic() >= end_at:
-                self.task.log_warning(f"跑商：区域地图关闭后未确认箱庭：{header or '识别未知'}。")
-                return False
-            if not reclicked and open_hits >= 2:
-                reclicked = True
-                open_hits = 0
-                self._status("区域地图", "关闭后标题仍在，补点一次返回")
-                self.task.operate_click(*SANDBOX_LARGE_MAP_RETURN_RELATIVE_POINT, after_sleep=0.5)
-                continue
-            self.task.sleep(0.4)
+        return self._close_confirmed_map_page(
+            {MapPageMode.SANDBOX_LARGE_MAP}, timeout=FIELD_MAP_CLOSE_TIMEOUT,
+        ).success
 
     def _walk_to_collection_map(
         self,
@@ -2614,17 +2843,13 @@ class SandboxNavigationMixin:
         self.task.log_warning("跑图：小地图放大状态未能切回。")
         return False
 
-    def _confirm_travel(self) -> str:
-        """Handle what follows a travel choice.
-
-        Returns "moving" after pressing the optional 确认 (hidden when the
-        user ticked 不再显示, then travel starts at once), "unreachable"
-        when the game says the destination is the current area, and "stuck"
-        when the dialog stayed up (it is cancelled, never left open).
-        """
+    def _confirm_travel(self, entry: str) -> str:
+        """区分仍在列表、确认弹窗、无法移动和已开始前往。"""
 
         end_at = monotonic() + MERCHANT_NAV_OUTCOME_TIMEOUT
         dialog_up = False
+        confirms = 0
+        field_hits = 0
         while monotonic() <= end_at:
             frame = self.vision.capture()
             toast = self.vision.ocr_text(frame, "导航提示", roi=MERCHANT_NAV_TOAST_OCR_ROI)
@@ -2635,25 +2860,47 @@ class SandboxNavigationMixin:
             )
             dialog_up = any(keyword in title for keyword in MERCHANT_TRAVEL_DIALOG_KEYWORDS)
             if dialog_up:
-                if self.vision.click_ocr(
-                    [r"确认"],
-                    roi=MERCHANT_NAV_CONFIRM_OCR_ROI,
-                    after_sleep=0.8,
-                    name="前往确认按钮",
-                ):
+                field_hits = 0
+                buttons = [
+                    box for box in self.vision.ocr_boxes(
+                        frame, "前往确认按钮", roi=MERCHANT_NAV_CONFIRM_OCR_ROI,
+                    ) if normalize_text(self.vision.simplify(str(box.name))) == "确认"
+                ]
+                if confirms < NAV_DESTINATION_ATTEMPTS and len(buttons) == 1:
+                    point = self._ocr_box_center(buttons[0])
+                    if point is not None:
+                        confirms += 1
+                        self.vision.click_client(point, frame.shape, after_sleep=0.8)
+            else:
+                listed, menu_text = self._nav_menu_entries(frame, (entry,))
+                if entry in listed:
+                    return "menu"
+                state = self.classify(frame)
+                if state == ScreenState.LOADING or self._black_frame(frame):
+                    return "moving"
+                guide = self.vision.match(frame, MERCHANT_NAV_GUIDE_TEMPLATE)
+                clear_field = (
+                    not menu_text and state == ScreenState.SANDBOX
+                    and self.vision.passes(guide, MERCHANT_NAV_GUIDE_TEMPLATE)
+                )
+                field_hits = field_hits + 1 if clear_field else 0
+                if field_hits >= AUTO_MOVE_IDLE_READS:
                     return "moving"
             self.task.sleep(MERCHANT_NAV_MENU_OCR_INTERVAL)
         if dialog_up:
             self.vision.click_ocr(
                 [r"^取消$"], roi=MERCHANT_NAV_CONFIRM_OCR_ROI, after_sleep=0.8, name="前往取消按钮"
             )
-            self.task.log_warning("跑商：前往确认弹窗的「确认」读不到，已取消。")
-            return "stuck"
-        return "moving"
+            self.task.log_warning("跑图：前往确认弹窗未关闭，已尝试取消。")
+        return "stuck"
 
 AUTO_MOVE_TEXT_RELATIVE_ROI = (560 / 1920, 80 / 1080, 1360 / 1920, 980 / 1080)
 AUTO_MOVE_QUESTION_KEYWORDS = ("是否自动移动", "前往所选目的地")
 FIELD_BATTLE_TURN_RELATIVE_ROI = (0.40, 0.05, 0.60, 0.16)
 FIELD_BATTLE_TIMEOUT = 180.0
+# Pause button in the user's 1920x1080 battle capture.
+FIELD_BATTLE_PAUSE_POINT = (1792 / 1920, 52 / 1080)
+FIELD_RETREAT_TIMEOUT = 30.0
+FIELD_RETREAT_ATTEMPTS = 3
 
 TELEPORT_PAGE_ARROW_REFERENCE = {"left": (380, 520), "right": (1540, 520)}

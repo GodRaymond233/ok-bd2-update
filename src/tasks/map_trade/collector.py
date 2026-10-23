@@ -53,7 +53,11 @@ class Collector(SkillExecutionMixin):
         self._last_skill_observations: dict[str, dict[str, object]] = {}
         self._last_skill_geometry: dict[str, object] = {}
         self._count_actions_seen: set[str] = set()
+        self._quota_checks: set[str] = set()
         self._completed_this_run = 0
+        self._collection_target = None
+        self._skill_field_generation = 0
+        self._recovery_suppression_enabled = False
         # (card_id, map_role) -> 探查施放时刻（monotonic）：重进卡带时
         # 倒计时数字 OCR 不可靠，靠账本判定增益仍在进行并复用。
         self._search_cast_monotonic: dict[tuple[str, str], float] = {}
@@ -72,6 +76,7 @@ class Collector(SkillExecutionMixin):
         """按顺序采集 ``cards``（默认剧情与角色卡）；单章模式在新完成一张卡带后停止。"""
         self._completed_this_run = 0
         self._count_actions_seen.clear()
+        self._quota_checks.clear()
         self._scope_cards = tuple(COLLECTABLE_CARDS if cards is None else cards)
         self._scope_actions = collection_action_policy(battle_actions)
         self.missing_cards = []
@@ -232,6 +237,7 @@ class Collector(SkillExecutionMixin):
         调用前须加载 progress；每个消费动作先写入意图，再点击和结算。
         返回 None 表示整卡核验完成，CollectionResult 表达停止、额度或失败原因。
         """
+        self._collection_target = None
         required_actions = collection_action_policy(battle_actions)
 
         state = self.progress.state
@@ -256,7 +262,17 @@ class Collector(SkillExecutionMixin):
             completed = remaining_completed
 
         remaining, recovery_only = self._plan_collection_work(card, completed, required_actions)
-        if recovery_only and not remaining:
+        needed = self.progress.collection_plan_requirements(
+            [target for target in card.targets if target.key not in completed],
+            card_id=card.card_id, required_actions=required_actions,
+        )
+        refresh_quota = tuple(
+            action for action in BATTLE_ACTIONS
+            if action.name in required_actions and needed.get(action.name)
+            and action.name not in self._quota_checks
+            and not self.progress.can_reserve_action(action.name, needed[action.name])
+        )
+        if recovery_only and not remaining and not refresh_quota:
             return CollectionResult(
                 True,
                 depleted=True,
@@ -264,6 +280,7 @@ class Collector(SkillExecutionMixin):
                 message="今日剩余吸取/召集/压制次数不足，未完成地图留待次日",
             )
         selected = None
+        selection_errors = []
         for _attempt in range(card_retries):
             selection_kwargs = {"enter_visually_complete": recovery_only}
             if set(required_actions) != COLLECTION_ACTION_NAMES:
@@ -274,11 +291,13 @@ class Collector(SkillExecutionMixin):
             )
             if selected.success:
                 break
+            if selected.message and selected.message not in selection_errors:
+                selection_errors.append(selected.message)
         if selected is None or not selected.success:
             return CollectionResult(
                 False,
                 completed_submaps=self._completed_this_run,
-                message=f"未能进入卡带 {card.card_id}：{selected.message if selected else '-'}",
+                message=f"未能进入卡带 {card.card_id}：{'；'.join(selection_errors) or '-'}",
                 card_missing=(
                     card.category == "event"
                     and selected is not None
@@ -288,6 +307,14 @@ class Collector(SkillExecutionMixin):
         if selected.outcome == CollectionCardSelectionOutcome.VISUALLY_COMPLETE:
             return self._record_visual_completion(card, required_actions)
 
+        if refresh_quota:
+            self._refresh_collection_quota(refresh_quota)
+            remaining, recovery_only = self._plan_collection_work(card, completed, required_actions)
+            if recovery_only and not remaining:
+                return CollectionResult(
+                    True, depleted=True, completed_submaps=self._completed_this_run,
+                    message="当前技能额度不足，未完成地图留待次日",
+                )
         outcome, observed_depleted = self._collect_card_targets(
             card, completed, remaining, required_actions, battle_actions,
             recovery_only=recovery_only,
@@ -354,6 +381,9 @@ class Collector(SkillExecutionMixin):
         self, card, completed, remaining, required_actions, battle_actions, *, recovery_only,
     ) -> tuple[CollectionResult | None, bool]:
         """Follow the named route, allowing one restart while preserving completed targets."""
+        self._recovery_suppression_enabled = (
+            not recovery_only and "压制" in required_actions
+        )
         action_kwargs = {"recovery_only": True} if recovery_only else {}
         current_target_key = self.navigator.current_collection_target(card)
         keys = [target.key for target in card.targets]
@@ -403,7 +433,10 @@ class Collector(SkillExecutionMixin):
                     return CollectionResult(
                         False,
                         completed_submaps=self._completed_this_run,
-                        message=f"{card.card_id}回起点失败：{reset.message}",
+                        message=(
+                            f"{card.card_id}前往{target.title}失败：{arrived.message}；"
+                            f"回起点失败：{reset.message}"
+                        ),
                     ), observed_depleted
                 current = card.targets[0]
                 order = [
@@ -414,6 +447,7 @@ class Collector(SkillExecutionMixin):
                 index = 0
                 continue
             current = target
+            self._collection_target = (card, target)
             if not recovery_only and not self.progress.weekly_action_complete(
                 card.card_id, target.role, ABSORB_ACTION.name,
             ):

@@ -24,7 +24,7 @@ from src.ui.responsive_task_config import install_responsive_task_config_ui
 
 # This marker is replaced with the Git tag when PyAppify creates the update
 # repository.  Source checkouts always read the project version from pyproject.
-version = "v1.4.1"
+version = "v1.4.2"
 
 
 def runtime_version(project_file: Path | None = None) -> str:
@@ -166,13 +166,13 @@ config = {
     "onetime_tasks": [
         ["src.tasks.DailyBatchTask", "DailyBatchTask"],
         ["src.tasks.DailyTask", "DailyTask"],
+        ["src.tasks.FreeGachaTask", "FreeGachaTask"],
         ["src.tasks.QuickHuntTask", "QuickHuntTask"],
         ["src.tasks.BargainLevelTask", "BargainLevelTask"],
         ["src.tasks.QuickSuppressionTask", "QuickSuppressionTask"],
         ["src.tasks.SquareGoddessTask", "SquareGoddessTask"],
-        ["src.tasks.MapTradeTask", "MapTradeTask"],
         ["src.tasks.MapCollectionTask", "MapCollectionTask"],
-        ["src.tasks.FreeGachaTask", "FreeGachaTask"],
+        ["src.tasks.MapTradeTask", "MapTradeTask"],
         ["src.tasks.PVPTask", "PVPTask"],
         ["src.tasks.BD2InputTestTask", "BD2MouseClickInputTestTask"],
         ["src.tasks.BD2InputTestTask", "BD2MouseWheelInputTestTask"],
