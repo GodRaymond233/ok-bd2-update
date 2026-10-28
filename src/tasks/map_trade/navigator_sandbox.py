@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from time import monotonic
 
+import cv2
 import numpy as np
 from ok.task.exceptions import FinishedException, TaskDisabledException
 
@@ -19,7 +20,7 @@ from src.tasks.map_trade.action_icons import (
 )
 from src.tasks.map_trade.models import (
     CARD_BY_ID,
-    CIRCLE_EXIT_WALKS,
+    COLLECTION_CIRCLE_APPROACHES,
     EVENT_WALK_EDGES,
     RESTART_NAV_ENTRIES,
     RESUMING_WALK_CARD_IDS,
@@ -34,6 +35,7 @@ from src.tasks.map_trade.models import (
     MatchResult,
     NavigationResult,
     ScreenState,
+    TeleportScope,
     TemplateSpec,
 )
 from src.tasks.map_trade.navigator_constants import (
@@ -48,6 +50,8 @@ from src.tasks.map_trade.navigator_constants import (
     AREA_MAP_TELEPORT_BRIGHT_NEUTRAL_RATIO,
     AREA_MAP_TELEPORT_BRIGHT_RADIUS_RATIO,
     AREA_MAP_TELEPORT_CLUSTER_RADIUS,
+    AREA_MAP_TELEPORT_PURPLE_MIN_CHANNEL_GAP,
+    AREA_MAP_TELEPORT_PURPLE_MIN_RATIO,
     AUTO_MOVE_CANCEL_ATTEMPTS,
     AUTO_MOVE_CANCEL_REFERENCE_POINT,
     AUTO_MOVE_IDLE_READS,
@@ -76,8 +80,7 @@ from src.tasks.map_trade.navigator_constants import (
     SANDBOX_LARGE_MAP_RETURN_REFERENCE_POINT,
     SANDBOX_LARGE_MAP_RETURN_RELATIVE_POINT,
     SANDBOX_MAP_SETTLE_SECONDS,
-    SANDBOX_MAP_TELEPORT_MIN_PIXEL,
-    SANDBOX_MAP_TELEPORT_PIXEL_MARGIN,
+    SANDBOX_MAP_TELEPORT_INNER_MIN_ZNCC,
     SANDBOX_MAP_TELEPORT_TEMPLATE,
     SANDBOX_NAVIGATION_CONFIRM_TIMEOUT,
     SANDBOX_NAVIGATION_MAP_TIMEOUT,
@@ -101,6 +104,8 @@ from src.tasks.map_trade.navigator_constants import (
     SANDBOX_TELEPORT_SKILL_POLL_INTERVAL,
     SANDBOX_TELEPORT_SKILL_TEMPLATE,
     SANDBOX_TELEPORT_SKILL_TIMEOUT,
+    TELEPORT_DESTINATION_ATTEMPTS,
+    TELEPORT_DESTINATION_CANDIDATES,
     TELEPORT_GENERATION_OCR_INTERVAL,
     TELEPORT_GENERATION_OCR_TIMEOUT,
     TELEPORT_INTERACTION_CLICK_DELAY,
@@ -112,6 +117,7 @@ from src.tasks.map_trade.navigator_constants import (
     TELEPORT_MAP_RETURN_REFERENCE_POINT,
     TELEPORT_MAP_RETURN_RELATIVE_POINT,
     TELEPORT_MAP_SEEK_LIMIT,
+    TELEPORT_MAP_SKILL_TEMPLATE,
     TELEPORT_MAP_TELEPORT_CIRCLE_TEMPLATES,
     TELEPORT_MAP_TITLE_OCR_RELATIVE_ROI,
     TELEPORT_MAP_TRAVEL_SETTLE_SECONDS,
@@ -127,8 +133,12 @@ from src.tasks.map_trade.navigator_constants import (
 )
 from src.tasks.map_trade.vision import normalize_text
 from src.utils.calibration import FHD_1080
+from src.utils.image_utils import masked_zncc
 
 FIELD_NAV_MENU_REFERENCE_POINT = (288, 112)
+ACTIVITY_EXIT_PICKER_ATTEMPTS = 4
+ACTIVITY_EXIT_PRESS_SECONDS = 0.3
+ACTIVITY_UPPER_BATTLE_EXIT = ("Q_ep3", "main_area", "battle_area_1")
 PORTAL_INTERACTION_ATTEMPTS = 3
 NAV_MENU_OPEN_ATTEMPTS = 3
 NAV_DESTINATION_ATTEMPTS = 3
@@ -578,25 +588,43 @@ class SandboxNavigationMixin:
             key=lambda result: result.pixel_score,
             reverse=True,
         )
-        best = passed[0].pixel_score if passed else -1.0
-        second = passed[1].pixel_score if len(passed) > 1 else -1.0
+        scored = [(result, self._sandbox_teleport_inner_score(frame, result)) for result in passed]
         self._status(
             "箱庭徒步导航传送阵",
-            f"candidates={len(passed)}, pixel best={best:.3f} second={second:.3f}",
+            "; ".join(
+                f"center={result.center}, pixel={result.pixel_score:.3f}, inner={score:.3f}"
+                for result, score in scored
+            ) or "未找到候选",
         )
-        if not passed:
-            return None
-        if len(passed) == 1:
-            return passed[0]
-        if (
-            best >= SANDBOX_MAP_TELEPORT_MIN_PIXEL
-            and best - second >= SANDBOX_MAP_TELEPORT_PIXEL_MARGIN
-        ):
-            return passed[0]
-        if second >= SANDBOX_MAP_TELEPORT_MIN_PIXEL:
-            # 同图可能有多个真实传送阵，均通过像素门限时可选最高分候选。
-            return passed[0]
-        return None
+        return next((
+            result for result, score in scored if score >= SANDBOX_MAP_TELEPORT_INNER_MIN_ZNCC
+        ), None)
+
+    def _sandbox_teleport_inner_score(self, frame: np.ndarray, result: MatchResult) -> float:
+        """Compare the central glyph, excluding the round frame shared by map icons."""
+        template, mask = self.vision._load(SANDBOX_MAP_TELEPORT_TEMPLATE)
+        width, height = result.size
+        if min(width, height) < 4:
+            return -1.0
+        scaled = cv2.resize(template, (width, height), interpolation=cv2.INTER_AREA)
+        inset_x, inset_y = width // 4, height // 4
+        core = scaled[inset_y:height - inset_y, inset_x:width - inset_x]
+        core_mask = None
+        if mask is not None:
+            scaled_mask = cv2.resize(mask, (width, height), interpolation=cv2.INTER_NEAREST)
+            core_mask = scaled_mask[inset_y:height - inset_y, inset_x:width - inset_x]
+        gray = self.vision._gray(frame)
+        left, top = result.position
+        shift = max(1, round(min(width, height) / 40))
+        scores = []
+        for dx in (-shift, 0, shift):
+            for dy in (-shift, 0, shift):
+                x, y = left + inset_x + dx, top + inset_y + dy
+                if x < 0 or y < 0:
+                    continue
+                patch = gray[y:y + core.shape[0], x:x + core.shape[1]]
+                scores.append(masked_zncc(patch, core, core_mask))
+        return max(scores, default=-1.0)
 
     def _click_sandbox_navigation_menu_teleport(self, frame: np.ndarray) -> bool:
         """Select a stacked navigation-map teleport submenu by OCR center."""
@@ -969,62 +997,235 @@ class SandboxNavigationMixin:
         return False
 
     def open_teleport_map_from_sandbox(self) -> NavigationResult:
-        """Open the teleport map through interaction first, then skill fallback."""
-
-        frame = self.vision.capture()
-        detection = self._detect_map_page_mode(frame)
+        """Reuse a confirmed page or interact with the ground circle."""
+        detection = self._detect_map_page_mode(self.vision.capture())
         if detection.mode.is_teleport_map:
-            return NavigationResult(
-                True, ScreenState.AREA_MAP, "已确认当前传送地图",
-                map_page_mode=detection.mode,
-            )
+            return NavigationResult(True, ScreenState.AREA_MAP, "已确认当前传送地图",
+                                    map_page_mode=detection.mode)
         ready = self._restore_navigation_field()
         if not ready.success:
             return ready
-        self._status("导航状态", "优先识别箱庭传送阵交互按钮")
         if self._click_sandbox_teleport_interaction():
+            self._teleport_skill_origin = None
             return self._confirm_portal_interaction("传送阵交互按钮")
+        return NavigationResult(False, ScreenState.SANDBOX, "当前未识别到地面阵交互入口")
 
-        ready = self._restore_navigation_field()
-        if not ready.success:
-            return ready
-        self._status("导航状态", "未识别交互按钮，回退识别箱庭5号传送阵技能")
+
+    def _open_teleport_skill(self, card: CardSpec) -> NavigationResult:
+        origin = self._collection_field_title()
+        if origin is None:
+            return NavigationResult(False, ScreenState.UNKNOWN, "施放传送技能前无法核实实际地图")
+        self._teleport_skill_origin = (card.card_id, origin)
+        self._status("导航恢复", f"{card.card_id}；技能兜底；源地图={origin}")
         if not self._click_sandbox_teleport_skill():
-            return NavigationResult(
-                False,
-                ScreenState.SANDBOX,
-                "未可靠识别箱庭5号传送阵技能，已停止打开传送阵地图",
-            )
-
-        opened = self._wait_for_sandbox_map_open(
-            "箱庭5号传送阵技能",
-            expected_mode=MapPageMode.GENERATE_TELEPORT,
+            return NavigationResult(False, ScreenState.SANDBOX, "未可靠识别可施放的5号传送技能")
+        return self._wait_for_sandbox_map_open(
+            "箱庭5号传送阵技能", expected_mode=MapPageMode.GENERATE_TELEPORT,
             detect_skill_failure=True,
         )
-        if opened.success:
-            return opened
-        if not self._sandbox_teleport_skill_failure_matches(opened.message):
-            return opened
 
-        fallback = self._walk_to_sandbox_teleport_interaction()
-        if fallback.success:
-            return NavigationResult(
-                True,
-                fallback.state,
-                f"{opened.message}；{fallback.message}",
-                map_page_mode=fallback.map_page_mode,
+
+    def _navigate_collection_target(
+        self, card: CardSpec, target: CollectionMapTarget, *, current_target=None,
+    ) -> NavigationResult:
+        self._collection_navigation_entries = set()
+        self._collection_walk_edges = set()
+        self._collection_page_moves = TELEPORT_MAP_SEEK_LIMIT * 3
+        try:
+            return self._navigate_collection_target_once(
+                card, target, current_target=current_target,
             )
+        finally:
+            self._collection_navigation_entries = None
+            self._collection_walk_edges = None
+            self._collection_page_moves = None
+
+    def _navigate_collection_target_once(
+        self, card, target, *, current_target=None,
+    ) -> NavigationResult:
+        entered = getattr(self, "_entered_card_id", None)
+        if entered is not None and entered != card.card_id:
+            return NavigationResult(
+                False, ScreenState.UNKNOWN, "当前卡带与导航目标不符，禁止跨卡传送",
+            )
+        self._status("导航恢复", f"{card.card_id}；目标={target.title}")
+        detection = self._detect_map_page_mode(self.vision.capture())
+        if not detection.mode.is_teleport_map:
+            ready = self._restore_navigation_field()
+            if not ready.success:
+                return ready
+            returning_via_npc = target == card.targets[0] and card.card_id in TOWN_NAV_ENTRIES
+            known_walk = current_target in card.targets and not returning_via_npc and (
+                (card.card_id, current_target.key, target.key) in WALK_LABEL_EDGES
+                or (card.card_id, current_target.key, target.key) in EVENT_WALK_EDGES
+            )
+            # 徒步入口会在当前打开的地图上核对源标题，可直接复用采集器的路线起点。
+            current = current_target.key if known_walk else self.current_collection_target(card)
+            if current == target.key:
+                return NavigationResult(True, ScreenState.SANDBOX, f"已核实位于{target.title}")
+            edge = (card.card_id, current, target.key)
+            if edge in WALK_LABEL_EDGES or edge in EVENT_WALK_EDGES:
+                origin = next((item for item in card.targets if item.key == current), None)
+                if not returning_via_npc and origin is not None and (
+                    (card.card_id, origin.key, target.key) in WALK_LABEL_EDGES
+                    or (card.card_id, origin.key, target.key) in EVENT_WALK_EDGES
+                ):
+                    walked = self._walk_to_collection_map(card, origin, target)
+                    if walked.success:
+                        return walked
+        opened = self._open_teleport_map_anywhere(card, target=target)
+        if opened.success:
+            if opened.state == ScreenState.SANDBOX:
+                return self._confirm_collection_arrival(card, target)
+            result = self._teleport_collection_target(card, target, opened)
+            if result.success:
+                return result
+        else:
+            result = opened
+        ready = self._restore_navigation_field()
+        if not ready.success:
+            return NavigationResult(False, ready.state, f"{result.message}；{ready.message}")
+        current = self.current_collection_target(card)
+        if current == target.key:
+            return NavigationResult(True, ScreenState.SANDBOX, f"已核实到达{target.title}")
+        origin = next((item for item in card.targets if item.key == current), None)
+        if origin is not None and (
+            (card.card_id, current, target.key) in WALK_LABEL_EDGES
+            or (card.card_id, current, target.key) in EVENT_WALK_EDGES
+        ):
+            walked = self._walk_to_collection_map(card, origin, target)
+        else:
+            walked = self._walk_to_circle_neighbour(card)
+            if walked is None:
+                walked = self._walk_to_sandbox_teleport_interaction()
+            if walked.success:
+                walked = self._teleport_collection_target(card, target, walked)
+        if walked.success:
+            return walked
         return NavigationResult(
-            False,
-            fallback.state,
-            f"{opened.message}；导航/徒步回退失败：{fallback.message}",
-            map_page_mode=fallback.map_page_mode,
+            False, walked.state, f"{result.message}；徒步恢复：{walked.message}",
         )
+
+
+    def _teleport_collection_target(self, card, target, opened) -> NavigationResult:
+        context = self._wait_for_collection_teleport_map(card)
+        if isinstance(context, NavigationResult):
+            return context
+        if context.map_page_mode != opened.map_page_mode:
+            return NavigationResult(False, ScreenState.AREA_MAP, "打开入口与后续传送页模式不一致")
+        if context.map_page_mode == MapPageMode.GENERATE_TELEPORT:
+            if context.teleport_scope == TeleportScope.CURRENT_MAP:
+                context = self._recall_current_circle(card, context)
+                if isinstance(context, NavigationResult):
+                    return context
+            elif context.teleport_scope != TeleportScope.CURRENT_CARTRIDGE:
+                return NavigationResult(
+                    False, ScreenState.AREA_MAP, "传送技能等级未知，未授权跨地图",
+                )
+        approach_key = COLLECTION_CIRCLE_APPROACHES.get((card.card_id, target.key), target.key)
+        approach = next(item for item in card.targets if item.key == approach_key)
+        context = self._seek_collection_page(card, context, approach)
+        if isinstance(context, NavigationResult):
+            return context
+        arrived = self._click_collection_destination(card, approach, context)
+        if not arrived.success or approach == target:
+            return arrived
+        return self._walk_to_collection_map(card, approach, target)
+
+
+    def _recall_current_circle(self, card, context) -> AreaMapContext | NavigationResult:
+        origin = getattr(self, "_teleport_skill_origin", None)
+        if (
+            context.map_page_mode != MapPageMode.GENERATE_TELEPORT
+            or context.teleport_scope != TeleportScope.CURRENT_MAP
+            or origin is None or origin[0] != card.card_id
+            or not self._same_collection_map(card, origin[1], context.normalized_text)
+        ):
+            return NavigationResult(
+                False, ScreenState.AREA_MAP, "非传说技能页面与实际源地图不符，未生成",
+            )
+        teleport = self._select_map_teleport(context.teleports)
+        if teleport is None or not self._click_teleport_map_destination(
+            teleport, context.frame_shape, page_mode=MapPageMode.GENERATE_TELEPORT,
+        ):
+            return NavigationResult(False, ScreenState.AREA_MAP, "本地图没有可用阵或生成未确认")
+        arrived = self._wait_for_current_sandbox()
+        if not arrived.success:
+            return arrived
+        actual = self._collection_field_title()
+        if actual is None or not self._same_collection_map(card, origin[1], actual):
+            return NavigationResult(
+                False, ScreenState.SANDBOX, f"本图回阵后地图不符：{actual or '-'}",
+            )
+        self._status("导航恢复", f"{card.card_id}；非传说本图回阵完成；实际地图={actual}")
+        opened = self.open_teleport_map_from_sandbox()
+        if not opened.success or opened.map_page_mode != MapPageMode.DIRECT_TELEPORT:
+            return NavigationResult(False, opened.state, "本图回阵后未确认地面阵直传页")
+        return self._wait_for_collection_teleport_map(card)
+
+
+    @staticmethod
+    def _same_collection_map(card, left: str, right: str) -> bool:
+        left_keys = SandboxNavigationMixin._target_keys_in_text(card, normalize_text(left))
+        right_keys = SandboxNavigationMixin._target_keys_in_text(card, normalize_text(right))
+        if left_keys or right_keys:
+            return len(left_keys) == 1 and left_keys == right_keys
+        def title(text):
+            return re.sub(r"^(?:安全|战斗)[IVⅠⅡⅢ123一二三]*", "", normalize_text(text))
+        return bool(title(left)) and title(left) == title(right)
+
+
+    def _collection_field_title(self) -> str | None:
+        if not self.ensure_small_minimap():
+            return None
+        header = self._open_field_map()
+        if header is None or not self._close_field_map():
+            return None
+        return header
+
 
     def _restore_navigation_field(self) -> NavigationResult:
         """恢复可确认的地图页面，未知页面不执行返回或技能动作。"""
         frame = self.vision.capture()
+        if getattr(self, "_navigation_menu_open", False):
+            entries = (HUNTING_GROUND_NAV_ENTRY, TOWN_NPC_NAV_ENTRY, "旅馆", "商店", "魔法阵")
+            listed, _ = self._nav_menu_entries(frame, entries)
+            if listed:
+                guide = self.vision.match(frame, MERCHANT_NAV_GUIDE_TEMPLATE)
+                if self.vision.passes(guide, MERCHANT_NAV_GUIDE_TEMPLATE):
+                    point = guide.center
+                elif len(listed) >= 2 and self.classify(frame) == ScreenState.SANDBOX:
+                    # 展开状态会改变按钮外观；已确认菜单和箱庭时复用本地开关位置。
+                    point = (
+                        round(FIELD_NAV_MENU_REFERENCE_POINT[0] * frame.shape[1] / FHD_1080.width),
+                        round(FIELD_NAV_MENU_REFERENCE_POINT[1] * frame.shape[0] / FHD_1080.height),
+                    )
+                else:
+                    return NavigationResult(False, ScreenState.UNKNOWN, "导航菜单未确认关闭控件")
+                self.vision.click_client(point, frame.shape, after_sleep=0.5)
+            for _ in range(2):
+                frame = self.vision.capture()
+                remaining, _ = self._nav_menu_entries(frame, entries)
+                if remaining or self.classify(frame) != ScreenState.SANDBOX:
+                    return NavigationResult(False, ScreenState.UNKNOWN, "导航菜单关闭未确认")
+                self.task.sleep(SANDBOX_NAVIGATION_OCR_INTERVAL)
+            self._navigation_menu_open = False
         detection = self._detect_map_page_mode(frame)
+        if detection.mode == MapPageMode.GENERATE_TELEPORT:
+            _, keywords, _ = self._teleport_generation_boxes(frame)
+            if keywords:
+                cancel = [box for box in self.vision.ocr_boxes(frame, "取消生成魔法阵")
+                          if normalize_text(str(box.name)) == "取消"]
+                if len(keywords) != 3 or len(cancel) != 1:
+                    return NavigationResult(False, ScreenState.UNKNOWN, "生成弹窗取消入口不明确")
+                point = self._ocr_box_center(cancel[0])
+                if point is None:
+                    return NavigationResult(False, ScreenState.UNKNOWN, "生成弹窗取消位置未知")
+                self.vision.click_client(point, frame.shape, after_sleep=0.5)
+                frame = self.vision.capture()
+                detection = self._detect_map_page_mode(frame)
+                if self._teleport_generation_boxes(frame)[1]:
+                    return NavigationResult(False, ScreenState.UNKNOWN, "生成弹窗取消后仍未关闭")
         if detection.mode != MapPageMode.UNKNOWN:
             return self._close_confirmed_map_page(
                 {detection.mode}, timeout=SANDBOX_NAVIGATION_CONFIRM_TIMEOUT,
@@ -1286,10 +1487,10 @@ class SandboxNavigationMixin:
         return result if self.vision.passes(result, spec) else None
 
     @staticmethod
-    def _area_map_teleport_bright_neutral_ratio(
+    def _area_map_teleport_color_ratios(
         frame: np.ndarray,
         result: MatchResult,
-    ) -> float:
+    ) -> tuple[float, float]:
         left, top = result.position
         width, height = result.size
         right = left + width
@@ -1302,7 +1503,7 @@ class SandboxNavigationMixin:
             or right > frame.shape[1]
             or bottom > frame.shape[0]
         ):
-            return 0.0
+            return 0.0, 0.0
         crop = frame[top:bottom, left:right]
         if crop.ndim == 2:
             color = np.repeat(crop[:, :, None], 3, axis=2)
@@ -1317,11 +1518,15 @@ class SandboxNavigationMixin:
         y, x = np.ogrid[:height, :width]
         circle = (x - center_x) ** 2 + (y - center_y) ** 2 < radius**2
         if not np.any(circle):
-            return 0.0
+            return 0.0, 0.0
         bright_neutral = (channel_min >= AREA_MAP_TELEPORT_BRIGHT_MINIMUM_GRAY) & (
             channel_spread <= AREA_MAP_TELEPORT_BRIGHT_MAXIMUM_SPREAD
         )
-        return float(np.mean(bright_neutral[circle]))
+        purple = (
+            np.minimum(pixels[..., 0], pixels[..., 2]) - pixels[..., 1]
+            >= AREA_MAP_TELEPORT_PURPLE_MIN_CHANNEL_GAP
+        )
+        return float(np.mean(bright_neutral[circle])), float(np.mean(purple[circle]))
 
     def _map_teleports(
         self,
@@ -1329,6 +1534,7 @@ class SandboxNavigationMixin:
         templates: tuple[TemplateSpec, ...],
         *,
         status_name: str,
+        skill_circle: bool = False,
     ) -> tuple[MatchResult, ...]:
         height, width = frame.shape[:2]
         cluster_radius = max(
@@ -1346,13 +1552,19 @@ class SandboxNavigationMixin:
                 minimum_score=self.vision.threshold_for(spec),
                 peak_radius=cluster_radius,
             ):
-                bright_ratio = self._area_map_teleport_bright_neutral_ratio(
+                bright_ratio, purple_ratio = self._area_map_teleport_color_ratios(
                     frame,
                     result,
                 )
                 accepted = (
                     self.vision.passes(result, spec)
-                    and bright_ratio >= AREA_MAP_TELEPORT_BRIGHT_NEUTRAL_RATIO
+                    and (
+                        purple_ratio >= AREA_MAP_TELEPORT_PURPLE_MIN_RATIO
+                        if skill_circle else (
+                            bright_ratio >= AREA_MAP_TELEPORT_BRIGHT_NEUTRAL_RATIO
+                            and purple_ratio < AREA_MAP_TELEPORT_PURPLE_MIN_RATIO
+                        )
+                    )
                 )
                 self._status(
                     status_name,
@@ -1360,7 +1572,7 @@ class SandboxNavigationMixin:
                         f"center={result.center}, match={result.score:.3f}, "
                         f"pixel={result.pixel_score:.3f}, "
                         f"zncc={result.zncc_score:.3f}, "
-                        f"bright={bright_ratio:.3f}, "
+                        f"bright={bright_ratio:.3f}, purple={purple_ratio:.3f}, "
                         f"accepted={accepted}"
                     ),
                 )
@@ -1461,6 +1673,13 @@ class SandboxNavigationMixin:
             overlap_arrow=self._optional_match(frame, OVERLAP_ARROW_TEMPLATE),
             back_button=self._optional_match(frame, AREA_MAP_BACK_TEMPLATE),
             confirmation_text=detection.header_text,
+            teleport_scope=detection.teleport_scope,
+            skill_teleports=(
+                self._map_teleports(
+                    frame, (TELEPORT_MAP_SKILL_TEMPLATE,),
+                    status_name="传送阵地图技能阵候选", skill_circle=True,
+                ) if detection.mode == MapPageMode.DIRECT_TELEPORT else ()
+            ),
         )
         self._status(
             "区域地图",
@@ -1471,6 +1690,7 @@ class SandboxNavigationMixin:
                 f"right={context.right_arrow is not None}, "
                 f"teleports={len(context.teleports)}, "
                 f"mode={context.map_page_mode.value}, "
+                f"scope={context.teleport_scope.value}, "
                 f"title_ocr={context.raw_text or '-'}, "
                 f"confirmation_ocr={context.confirmation_text or '-'}"
             ),
@@ -1526,6 +1746,11 @@ class SandboxNavigationMixin:
         target: CollectionMapTarget,
         context: AreaMapContext,
     ) -> NavigationResult:
+        if (
+            context.map_page_mode == MapPageMode.GENERATE_TELEPORT
+            and context.teleport_scope != TeleportScope.CURRENT_CARTRIDGE
+        ):
+            return NavigationResult(False, ScreenState.AREA_MAP, "技能范围不允许跨地图选阵")
         if not context.map_page_mode.is_teleport_map:
             return NavigationResult(
                 False,
@@ -1539,20 +1764,24 @@ class SandboxNavigationMixin:
                 ScreenState.AREA_MAP,
                 (f"传送前地图名不符：expected={target.title}, actual={context.raw_text or '-'}"),
             )
-        teleport = self._select_map_teleport(context.teleports)
+        teleport = self._select_map_teleport(context.teleports or context.skill_teleports)
         if teleport is None:
             end_at = monotonic() + 2.0
             while monotonic() <= end_at:
                 self.task.sleep(AREA_MAP_CHANGE_INTERVAL)
                 latest = self._capture_area_map_context(card)
                 if (
-                    latest.map_page_mode == context.map_page_mode
-                    and latest.resolved_target_key == target.key
+                    latest.map_page_mode != context.map_page_mode
+                    or latest.resolved_target_key != target.key
+                    or latest.teleport_scope != context.teleport_scope
                 ):
-                    context = latest
-                    teleport = self._select_map_teleport(context.teleports)
-                    if teleport is not None:
-                        break
+                    return NavigationResult(
+                        False, ScreenState.UNKNOWN, "等待传送阵时地图身份或技能范围变化",
+                    )
+                context = latest
+                teleport = self._select_map_teleport(context.teleports or context.skill_teleports)
+                if teleport is not None:
+                    break
         if teleport is None:
             overlap = context.overlap_arrow
             if overlap is not None:
@@ -1563,10 +1792,11 @@ class SandboxNavigationMixin:
                 if (
                     latest.map_page_mode != context.map_page_mode
                     or latest.resolved_target_key != target.key
+                    or latest.teleport_scope != context.teleport_scope
                 ):
                     return NavigationResult(False, ScreenState.UNKNOWN, "展开传送阵后地图身份不符")
                 context = latest
-                teleport = self._select_map_teleport(context.teleports)
+                teleport = self._select_map_teleport(context.teleports or context.skill_teleports)
         if teleport is None:
             return NavigationResult(
                 False,
@@ -1576,198 +1806,95 @@ class SandboxNavigationMixin:
                     "无法安全传送"
                 ),
             )
-        self._status(
-            "传送阵地图传送阵点击中心",
-            (
-                f"target={target.title}, candidates={len(context.teleports)}, "
-                f"selected=center={teleport.center}, "
-                f"match={teleport.score:.3f}, pixel={teleport.pixel_score:.3f}, "
-                f"zncc={teleport.zncc_score:.3f}"
-            ),
+        tried = []
+        for _click in range(TELEPORT_DESTINATION_ATTEMPTS * TELEPORT_DESTINATION_CANDIDATES):
+            eligible = []
+            for is_skill, kind in enumerate((context.teleports, context.skill_teleports)):
+                for candidate in sorted(kind, key=lambda value: value.score, reverse=True):
+                    point = (
+                        candidate.center[0] / context.frame_shape[1],
+                        candidate.center[1] / context.frame_shape[0],
+                    )
+                    previous = next((
+                        entry for entry in tried
+                        if abs(point[0] - entry[0][0])
+                        < AREA_MAP_TELEPORT_CLUSTER_RADIUS / FHD_1080.width
+                        and abs(point[1] - entry[0][1])
+                        < AREA_MAP_TELEPORT_CLUSTER_RADIUS / FHD_1080.height
+                    ), None)
+                    if previous is None:
+                        if (
+                            len(tried) >= TELEPORT_DESTINATION_CANDIDATES
+                            or (
+                                not is_skill and sum(not entry[2] for entry in tried)
+                                >= TELEPORT_DESTINATION_CANDIDATES - 1
+                            )
+                        ):
+                            continue
+                        previous = [point, 0, is_skill]
+                    if previous[1] < TELEPORT_DESTINATION_ATTEMPTS:
+                        eligible.append((candidate, previous))
+                if eligible:
+                    break
+            if not eligible:
+                break
+            teleport, entry = eligible[0]
+            if entry not in tried:
+                tried.append(entry)
+            entry[1] += 1
+            self._status(
+                "传送阵地图传送阵点击中心",
+                f"{target.title}：候选{tried.index(entry) + 1}，"
+                f"第{entry[1]}次点击 {teleport.center}",
+            )
+            sent = self._click_teleport_map_destination(
+                teleport, context.frame_shape, page_mode=context.map_page_mode,
+            )
+            latest = self._capture_area_map_context(card)
+            if not latest.is_area_map:
+                if not sent:
+                    return NavigationResult(
+                        False, ScreenState.UNKNOWN, "传送确认未完成，页面已变化",
+                    )
+                arrived = self._wait_for_story_sandbox(card.number)
+                if not arrived.success:
+                    return NavigationResult(
+                        False, arrived.state,
+                        f"传送到{target.title}后未确认剧情箱庭：{arrived.message}",
+                    )
+                return self._confirm_collection_arrival(card, target)
+            if (
+                latest.map_page_mode != context.map_page_mode
+                or latest.resolved_target_key != target.key
+                or latest.teleport_scope != context.teleport_scope
+            ):
+                return NavigationResult(
+                    False, ScreenState.AREA_MAP, "传送重试前地图身份或技能范围变化",
+                )
+            context = latest
+        return NavigationResult(
+            False, ScreenState.AREA_MAP, f"{target.title}可用传送阵均未响应，已达有限重试上限",
         )
-        if not self._click_teleport_map_destination(
-            teleport,
-            context.frame_shape,
-            page_mode=context.map_page_mode,
-        ):
-            return NavigationResult(
-                False,
-                ScreenState.AREA_MAP,
-                (
-                    f"传送到{target.title}前未可靠确认生成魔法阵弹窗"
-                    if context.map_page_mode == MapPageMode.GENERATE_TELEPORT
-                    else f"传送到{target.title}前未完成传送阵地图传送"
-                ),
-            )
-        arrived = self._wait_for_story_sandbox(card.number)
-        if not arrived.success:
-            return NavigationResult(
-                False,
-                arrived.state,
-                f"传送到{target.title}后未确认剧情箱庭：{arrived.message}",
-            )
-        return self._confirm_collection_arrival(card, target)
 
     def prepare_collection_main_area(
-        self, card_id: str, *, via_hunting_ground: bool = False
+        self, card_id: str, *, via_hunting_ground: bool = False,
     ) -> NavigationResult:
-        """将卡带位置归一到采集路线起点。
-
-        ``via_hunting_ground`` 启用失败恢复路径，经导航菜单或可用传送阵返回起点。
-        """
-
+        """Recover the registered starting map and verify the actual arrival."""
         card = CARD_BY_ID.get(card_id)
         if card is None or not card.collectable:
-            return NavigationResult(False, ScreenState.UNKNOWN, f"非跑图剧情卡带：{card_id}")
-        if card.card_id in WALKED_EVENT_CARD_IDS:
-            if (
-                self._travel_via_nav_menu(RESTART_NAV_ENTRIES[card.card_id])
-                and self.current_collection_target(card) == card.targets[0].key
-            ):
-                return NavigationResult(True, ScreenState.SANDBOX, f"已到达{card.targets[0].title}")
-            return NavigationResult(False, self.classify(), "活动卡带起点导航未确认")
-        if not self.ensure_small_minimap():
-            return NavigationResult(False, ScreenState.SANDBOX, "小地图放大状态未能切回")
-        if via_hunting_ground and (npc := RESTART_NAV_ENTRIES.get(card.card_id)):
-            # 配有专用重启入口的卡带优先经 NPC 回到路线起点。
-            self._travel_via_nav_menu(npc)
-            if self.current_collection_target(card) == card.targets[0].key:
-                return NavigationResult(
-                    True, ScreenState.SANDBOX, f"经{npc}到达{card.targets[0].title}"
-                )
-            self._status("导航状态", f"经{npc}未到{card.targets[0].title}，改用原来的回城方式")
-        portal_failure = ""
-        if via_hunting_ground:
-            opened = None
-            if self._click_sandbox_teleport_interaction():
-                opened = self._confirm_portal_interaction("传送阵交互按钮")
-                if not opened.success:
-                    portal_failure = opened.message
-                    ready = self._restore_navigation_field()
-                    if not ready.success:
-                        return NavigationResult(
-                            False, ready.state, f"{portal_failure}；{ready.message}",
-                            map_page_mode=ready.map_page_mode,
-                        )
-                    self._status("导航状态", f"原地交互未确认传送页，改用导航：{portal_failure}")
-            if opened is None or not opened.success:
-                entry = self._travel_to_hunting_ground()
-                if entry == HUNTING_GROUND_NAV_ENTRY:
-                    opened = self._open_hunting_ground_portal()
-                else:
-                    # 导航到城镇 NPC 后可能已在路线起点，先确认位置。
-                    if (
-                        entry is not None
-                        and self.current_collection_target(card) == card.targets[0].key
-                    ):
-                        return NavigationResult(
-                            True, ScreenState.SANDBOX, f"经{entry}到达{card.targets[0].title}"
-                        )
-                    opened = self._open_teleport_map_anywhere(card)
-        else:
-            opened = self._open_teleport_map_anywhere(card)
-        if not opened.success:
-            if portal_failure:
-                return NavigationResult(
-                    False, opened.state,
-                    f"原地交互失败：{portal_failure}；导航/徒步回退失败：{opened.message}",
-                    map_page_mode=opened.map_page_mode,
-                )
-            return opened
-        context = self._wait_for_collection_teleport_map(card)
-        if isinstance(context, NavigationResult):
-            return context
-        if context.map_page_mode != opened.map_page_mode:
-            return NavigationResult(
-                False,
-                ScreenState.AREA_MAP,
-                (
-                    "打开入口与后续传送页模式不一致："
-                    f"opened={opened.map_page_mode.value}, current={context.map_page_mode.value}"
-                ),
-                map_page_mode=context.map_page_mode,
-            )
-        main_target = card.targets[0]
-        if context.resolved_target_key == main_target.key:
-            return self.return_teleport_map_to_sandbox(card.number)
-        first = self._seek_collection_page(card, context, main_target)
-        if isinstance(first, NavigationResult):
-            return first
-        return self._click_collection_destination(
-            card,
-            main_target,
-            first,
-        )
+            return NavigationResult(False, ScreenState.UNKNOWN, f"非跑图卡带：{card_id}")
+        return self._navigate_collection_target(card, card.targets[0])
+
 
     def advance_collection_map(
-        self,
-        card_id: str,
-        current_target: CollectionMapTarget,
+        self, card_id: str, current_target: CollectionMapTarget,
         next_target: CollectionMapTarget,
     ) -> NavigationResult:
-        """按路线配置徒步、经 NPC 或按地图名传送至下一个采集目标。"""
-
         card = CARD_BY_ID.get(card_id)
-        if card is None or not card.collectable:
-            return NavigationResult(False, ScreenState.UNKNOWN, f"非跑图剧情卡带：{card_id}")
-        edge = (card_id, current_target.key, next_target.key)
-        if edge in WALK_LABEL_EDGES or edge in EVENT_WALK_EDGES:
-            if card.card_id in WALKED_EVENT_CARD_IDS and next_target == card.targets[0]:
-                npc = TOWN_NAV_ENTRIES[card.card_id]
-                if (
-                    self._travel_via_nav_menu(npc)
-                    and self.current_collection_target(card) == next_target.key
-                ):
-                    return NavigationResult(
-                        True, ScreenState.SANDBOX, f"经{npc}到达{next_target.title}",
-                    )
-            return self._walk_to_collection_map(card, current_target, next_target)
-        town_npc = TOWN_NAV_ENTRIES.get(card.card_id)
-        if town_npc and next_target.key == card.targets[0].key:
-            # 返城优先走 NPC 导航以避开巡逻；未到达时再尝试传送阵地图。
-            if (
-                self._travel_via_nav_menu(town_npc)
-                and self.current_collection_target(card) == next_target.key
-            ):
-                return NavigationResult(
-                    True, ScreenState.SANDBOX, f"经{town_npc}到达{next_target.title}"
-                )
-            self._status("导航状态", f"经{town_npc}未到{next_target.title}，改用传送阵地图")
-        opened = self._open_teleport_map_anywhere(card)
-        if not opened.success:
-            return NavigationResult(
-                False,
-                opened.state,
-                f"{current_target.title}无法打开传送阵地图：{opened.message}",
-                map_page_mode=opened.map_page_mode,
-            )
-        context = self._wait_for_collection_teleport_map(card)
-        if isinstance(context, NavigationResult):
-            return context
-        if context.map_page_mode != opened.map_page_mode:
-            return NavigationResult(
-                False,
-                ScreenState.AREA_MAP,
-                (
-                    "打开入口与后续传送页模式不一致："
-                    f"opened={opened.map_page_mode.value}, current={context.map_page_mode.value}"
-                ),
-                map_page_mode=context.map_page_mode,
-            )
-        if context.resolved_target_key != current_target.key:
-            self._status(
-                "区域地图",
-                f"传送阵地图停在{context.raw_text or '-'}"
-                f"（预期{current_target.title}），按名称查找",
-            )
-        changed = self._seek_collection_page(card, context, next_target)
-        if isinstance(changed, NavigationResult):
-            return changed
-        return self._click_collection_destination(
-            card,
-            next_target,
-            changed,
-        )
+        if card is None or not card.collectable or next_target not in card.targets:
+            return NavigationResult(False, ScreenState.UNKNOWN, f"非跑图卡带或地图：{card_id}")
+        return self._navigate_collection_target(card, next_target, current_target=current_target)
+
 
     def _wait_for_area_map_change(
         self,
@@ -1798,7 +1925,10 @@ class SandboxNavigationMixin:
         *,
         force: bool = False,
     ) -> AreaMapContext | None:
-        if not context.map_page_mode.is_teleport_map:
+        if not context.map_page_mode.is_teleport_map or (
+            context.map_page_mode == MapPageMode.GENERATE_TELEPORT
+            and context.teleport_scope != TeleportScope.CURRENT_CARTRIDGE
+        ):
             return None
         if not force and self._area_map_page_end(context, direction):
             state, fresh = self._area_map_page_state(card, context)
@@ -1808,6 +1938,12 @@ class SandboxNavigationMixin:
                 return None
             context = fresh
         for _attempt in range(2):
+            remaining = getattr(self, "_collection_page_moves", None)
+            if remaining is not None:
+                if remaining <= 0:
+                    self._status("导航恢复", "本次恢复的地图翻页预算已用尽")
+                    return None
+                self._collection_page_moves = remaining - 1
             arrow = context.right_arrow if direction == "right" else context.left_arrow
             if arrow is not None:
                 center = arrow.center
@@ -1865,54 +2001,16 @@ class SandboxNavigationMixin:
             timeout=8.0,
         )
 
-    def _confirm_collection_arrival(
-        self,
-        card: CardSpec,
-        target: CollectionMapTarget,
-    ) -> NavigationResult:
-        # 普通地图可直接核验实际落点，避免再次开启传送技能。
-        if self.ensure_small_minimap():
-            header = self._open_field_map()
-            if header is not None:
-                if not self._close_field_map():
-                    return NavigationResult(False, ScreenState.SANDBOX_MAP, "到达后区域地图未关闭")
-                if tuple(self._target_keys_in_text(card, header)) == (target.key,):
-                    return NavigationResult(
-                        True, ScreenState.SANDBOX, f"{card.card_id}/{target.key}/{target.title}",
-                    )
-                return NavigationResult(
-                    False, ScreenState.SANDBOX,
-                    f"到达后地图不符：目标={target.title}，实际={header}",
-                )
-        area = self.ensure_area_map()
-        if not area.success:
-            return NavigationResult(False, area.state, f"到达后无法复核区域地图：{area.message}")
-        context = self._capture_area_map_context(card)
-        if context.map_page_mode != area.map_page_mode:
-            return NavigationResult(
-                False,
-                ScreenState.AREA_MAP,
-                (
-                    "到达复核时页面模式发生变化："
-                    f"opened={area.map_page_mode.value}, current={context.map_page_mode.value}"
-                ),
-                map_page_mode=context.map_page_mode,
-            )
-        if context.resolved_target_key != target.key:
-            actual = context.resolved_target_key or context.raw_text or "未知"
-            return NavigationResult(
-                False,
-                ScreenState.AREA_MAP,
-                f"到达后地图不符：目标={target.title}，实际={actual}",
-            )
-        closed = self._close_area_map(context)
-        if not closed.success:
-            return closed
+    def _confirm_collection_arrival(self, card, target) -> NavigationResult:
+        header = self._collection_field_title()
+        if header is not None and self._target_keys_in_text(card, header) == (target.key,):
+            return NavigationResult(True, ScreenState.SANDBOX,
+                                    f"{card.card_id}/{target.key}/{target.title}")
         return NavigationResult(
-            True,
-            ScreenState.SANDBOX,
-            f"{card.card_id}/{target.key}/{target.title}",
+            False, ScreenState.UNKNOWN if header is None else ScreenState.SANDBOX,
+            f"实际落点未确认：目标={target.title}，实际={header or '-'}",
         )
+
 
     def wait_for_collection_field(self, frame=None) -> np.ndarray:
         """Recover encounters before accepting a stationary collection field."""
@@ -2324,6 +2422,11 @@ class SandboxNavigationMixin:
         起始页可能是狩猎场或路线外地图；已知当前位置时按目标顺序决定优先方向。
         """
 
+        if (
+            context.map_page_mode == MapPageMode.GENERATE_TELEPORT
+            and context.teleport_scope != TeleportScope.CURRENT_CARTRIDGE
+        ):
+            return NavigationResult(False, ScreenState.AREA_MAP, "当前技能范围不允许翻页")
         if context.resolved_target_key == target.key:
             return context
         keys = [item.key for item in card.targets]
@@ -2338,19 +2441,25 @@ class SandboxNavigationMixin:
         start = context
         for direction in directions:
             current = start
+            seen = {current.normalized_text}
             for _ in range(TELEPORT_MAP_SEEK_LIMIT):
                 changed = self._move_area_map(card, current, direction)
                 if changed is None:
                     break  # no arrow or no change: this end of the list
+                if changed.normalized_text in seen:
+                    break
+                seen.add(changed.normalized_text)
                 current = changed
                 if current.resolved_target_key == target.key:
                     return current
             start = current
         # 单侧箭头漏识别可能被当作尽头；最后沿优先方向按标定点限次复核。
+        seen = {start.normalized_text}
         for _ in range(TELEPORT_MAP_SEEK_LIMIT):
             changed = self._move_area_map(card, start, directions[0], force=True)
-            if changed is None:
+            if changed is None or changed.normalized_text in seen:
                 break
+            seen.add(changed.normalized_text)
             start = changed
             if start.resolved_target_key == target.key:
                 return start
@@ -2361,76 +2470,79 @@ class SandboxNavigationMixin:
         )
 
     def current_collection_target(self, card: CardSpec) -> str | None:
-        """通过区域地图标题解析当前采集目标，无须站在传送阵旁。
-
-        关闭地图并唯一匹配目标后才返回其键，否则返回 None。
-        """
-        if not self.ensure_small_minimap():
-            return None
-        header = self._open_field_map()
-        if header is None:
-            return None
-        if not self._close_field_map():
-            return None
-        keys = self._target_keys_in_text(card, header)
-        self._status("区域地图", f"当前位置 {header} -> {keys[0] if len(keys) == 1 else '-'}")
+        header = self._collection_field_title()
+        keys = self._target_keys_in_text(card, header) if header is not None else ()
+        self._status(
+            "区域地图", f"当前位置 {header or '-'} -> {keys[0] if len(keys) == 1 else '-'}",
+        )
         return keys[0] if len(keys) == 1 else None
 
-    def _open_teleport_map_anywhere(self, card: CardSpec | None = None) -> NavigationResult:
-        """依次尝试原地开图、徒步到传送阵和导航菜单转移。"""
+
+    def _open_teleport_map_anywhere(
+        self, card: CardSpec | None = None, *, target: CollectionMapTarget | None = None,
+    ) -> NavigationResult:
+        """Ground interaction, separate fast-travel attempts, then one talent fallback."""
+        entered = getattr(self, "_entered_card_id", None)
+        if card is not None and entered is not None and entered != card.card_id:
+            return NavigationResult(False, ScreenState.UNKNOWN, "实际入场卡带与传送请求不符")
         opened = self.open_teleport_map_from_sandbox()
         if opened.success:
             return opened
+        failures = [opened.message]
+        town_first = card is not None and (
+            target == card.targets[0] or card.card_id in RESTART_NAV_ENTRIES
+        )
+        entries = ((TOWN_NPC_NAV_ENTRY, HUNTING_GROUND_NAV_ENTRY) if town_first
+                   else (HUNTING_GROUND_NAV_ENTRY, TOWN_NPC_NAV_ENTRY))
+        for entry in entries:
+            ready = self._restore_navigation_field()
+            if not ready.success:
+                return NavigationResult(False, ready.state, "；".join([*failures, ready.message]))
+            self._status("导航恢复", f"{card.card_id if card else '-'}；快速移动={entry}")
+            if self._travel_via_nav_menu(entry) is None:
+                failures.append(f"{entry}：{self._navigation_failure or '未到达'}")
+                continue
+            actual = self._collection_field_title()
+            if actual is None:
+                failures.append(f"{entry}后实际地图未知")
+                continue
+            if target is not None and self._target_keys_in_text(card, actual) == (target.key,):
+                return NavigationResult(
+                    True, ScreenState.SANDBOX, f"经{entry}核实到达{target.title}",
+                )
+            if entry == HUNTING_GROUND_NAV_ENTRY and not self._hunting_ground_field():
+                failures.append(f"{entry}落点未通过狩猎场控件核验：{actual}")
+                continue
+            opened = self._open_hunting_ground_portal()
+            if opened.success:
+                return opened
+            failures.append(f"{entry}：{opened.message}")
         ready = self._restore_navigation_field()
         if not ready.success:
-            return NavigationResult(False, ready.state, f"{opened.message}；{ready.message}")
-        neighbour = self._walk_to_circle_neighbour(card)
-        if neighbour is not None:
-            return neighbour
-        # 原地入口不可用时，先尝试徒步到当前地图的传送阵。
-        self._status("导航状态", "不在传送阵旁，点地图上的传送门走过去")
-        walked = self._walk_to_sandbox_teleport_interaction()
-        if walked.success:
-            return walked
-        self._status("导航状态", "地图传送门不可用，前往狩猎场的传送阵")
-        entry = self._travel_to_hunting_ground()
-        if entry is None:
-            return NavigationResult(
-                False, walked.state,
-                f"{opened.message}；徒步前往传送阵失败：{walked.message}；"
-                f"导航菜单也未能前往狩猎场或艾琳：{self._navigation_failure}",
-            )
-        if entry == HUNTING_GROUND_NAV_ENTRY:
-            return self._open_hunting_ground_portal()
-        # 艾琳 stands in the town: its circle, walking there if needed.
-        if self._click_sandbox_teleport_interaction():
-            return self._confirm_portal_interaction("传送阵交互按钮")
-        walked = self._walk_to_sandbox_teleport_interaction()
-        if walked.success:
-            return walked
-        return self._walk_to_circle_neighbour(card) or walked
+            return NavigationResult(False, ready.state, "；".join([*failures, ready.message]))
+        if card is not None:
+            opened = self._open_teleport_skill(card)
+            if opened.success:
+                return opened
+            failures.append(opened.message)
+        return NavigationResult(False, opened.state, "；".join(failures),
+                                map_page_mode=opened.map_page_mode)
+
 
     def _walk_to_circle_neighbour(self, card: CardSpec | None) -> NavigationResult | None:
-        """从已确认的无传送阵地图走到相邻地图，再打开传送阵。"""
-        edge = CIRCLE_EXIT_WALKS.get(card.card_id) if card is not None else None
-        if edge is None:
+        if card is None:
             return None
-        origin, destination = (
-            next(target for target in card.targets if target.title == title) for title in edge
-        )
-        if self.current_collection_target(card) != origin.key:
+        current = self.current_collection_target(card)
+        neighbour = COLLECTION_CIRCLE_APPROACHES.get((card.card_id, current))
+        if neighbour is None:
             return None
+        origin = next(item for item in card.targets if item.key == current)
+        destination = next(item for item in card.targets if item.key == neighbour)
         moved = self._walk_to_collection_map(card, origin, destination)
-        if not moved.success:
-            return moved
-        return self.open_teleport_map_from_sandbox()
+        return self.open_teleport_map_from_sandbox() if moved.success else moved
 
-    def _travel_to_hunting_ground(self) -> str | None:
-        """优先导航到狩猎场，其次艾琳；返回实际到达的入口，失败时返回 None。"""
-        return self._travel_via_nav_menu(HUNTING_GROUND_NAV_ENTRY, TOWN_NPC_NAV_ENTRY)
 
     def _open_hunting_ground_portal(self) -> NavigationResult:
-        """确认传送页；人物未在阵上时，通过大地图步行后重新交互。"""
         opened = self.open_teleport_map_from_sandbox()
         if opened.success or opened.state != ScreenState.SANDBOX:
             return opened
@@ -2441,10 +2553,10 @@ class SandboxNavigationMixin:
         if walked.success:
             return walked
         return NavigationResult(
-            False, walked.state,
-            f"狩猎场传送入口未确认：{opened.message}；{walked.message}",
+            False, walked.state, f"{opened.message}；{walked.message}",
             map_page_mode=walked.map_page_mode,
         )
+
 
     def _hunting_ground_field(self) -> bool:
         frame = self.vision.capture()
@@ -2460,6 +2572,13 @@ class SandboxNavigationMixin:
         or a town NPC such as 艾琳) -> 确认, then the field once the trip (and
         any walk after it) ends.  The entry travelled to, or None."""
 
+        attempted = getattr(self, "_collection_navigation_entries", None)
+        if attempted is not None:
+            entries = tuple(entry for entry in entries if entry not in attempted)
+            if not entries:
+                self._navigation_failure = "本轮快速移动入口已尝试完毕"
+                return None
+            attempted.update(entries)
         wanted = "、".join(entries)
         self._navigation_failure = ""
         ready = self._restore_navigation_field()
@@ -2483,6 +2602,7 @@ class SandboxNavigationMixin:
                     FIELD_NAV_MENU_REFERENCE_POINT[1] / FHD_1080.height,
                     after_sleep=0.8,
                 )
+            self._navigation_menu_open = True
             choice = self._nav_menu_choice(entries)
             if choice is not None:
                 break
@@ -2514,6 +2634,7 @@ class SandboxNavigationMixin:
         if outcome != "moving":
             self._navigation_failure = f"前往{entry}确认失败：{outcome}"
             return None
+        self._navigation_menu_open = False
         arrived = self._wait_for_field_hud(
             timeout=self._loading_timeout(),
             interval=0.5,
@@ -2612,7 +2733,11 @@ class SandboxNavigationMixin:
             if "战斗" in header or "安全" in header:
                 return header
             if monotonic() >= end_at:
-                return None
+                detection = self._detect_map_page_mode(self.vision.capture())
+                return (
+                    normalize_text(detection.header_text)
+                    if detection.mode == MapPageMode.SANDBOX_LARGE_MAP else None
+                )
             self.task.sleep(0.4)
 
     def _close_field_map(self) -> bool:
@@ -2627,10 +2752,13 @@ class SandboxNavigationMixin:
         target: CollectionMapTarget,
     ) -> NavigationResult:
         """Walk through an area-map exit and confirm the destination by its title."""
+        edge = (card.card_id, current.key, target.key)
+        attempted = getattr(self, "_collection_walk_edges", None)
+        if attempted is not None and edge in attempted:
+            return NavigationResult(False, ScreenState.SANDBOX, "本次恢复已尝试该徒步出口")
         if not self.ensure_small_minimap():
             return NavigationResult(False, ScreenState.SANDBOX, "小地图放大状态未能切回")
         current_title = normalize_text(current.title)
-        edge = (card.card_id, current.key, target.key)
         header = self._open_field_map()
         for attempt in range(WALK_EXIT_ATTEMPTS):
             if header is None:
@@ -2646,6 +2774,8 @@ class SandboxNavigationMixin:
                 )
             if card.category == "event":
                 current_title = header
+            if attempted is not None:
+                attempted.add(edge)
             if not self._click_walk_exit(edge, target, current_title):
                 self._close_field_map()
                 npc = RESTART_NAV_ENTRIES.get(card.card_id)
@@ -2705,8 +2835,7 @@ class SandboxNavigationMixin:
         )
 
     def _click_walk_exit(self, edge, target: CollectionMapTarget, current_title: str) -> bool:
-        """Click the open area map's exit to ``target`` (calibrated spots or its
-        OCR label) until the map closes; True once it did."""
+        """Click the area-map exit and confirm departure before waiting for arrival."""
 
         frame = self.vision.capture()
         end_at = monotonic() + WALK_LABEL_READ_TIMEOUT
@@ -2730,16 +2859,46 @@ class SandboxNavigationMixin:
         for point in points:
             self._status("导航状态", f"区域地图点击{target.title}出口 {point}")
             self.vision.click_client(point, frame.shape, after_sleep=WALK_CLICK_SETTLE_SECONDS)
-            started = self._exit_walk_started(current_title)
+            started = self._exit_walk_started(
+                current_title, require_movement=edge in EVENT_WALK_EDGES,
+            )
             if started is not None:
                 return started
-            if edge in EVENT_WALK_EDGES and self._click_activity_exit_picker(target):
-                started = self._exit_walk_started(current_title)
-                if started is not None:
-                    return started
+            if edge in EVENT_WALK_EDGES and self._click_activity_exit_picker(target, edge=edge):
+                for attempt in range(ACTIVITY_EXIT_PICKER_ATTEMPTS):
+                    started = self._exit_walk_started(current_title, require_movement=True)
+                    if started is not None:
+                        return started
+                    if attempt + 1 < ACTIVITY_EXIT_PICKER_ATTEMPTS:
+                        self._status(
+                            "导航状态",
+                            f"活动出口未响应，重新打开地图并识别入口（{attempt + 1}/3）",
+                        )
+                        if not self._close_field_map():
+                            return False
+                        header = self._open_field_map()
+                        if header is None or current_title not in header:
+                            return False
+                        fresh = self.vision.capture()
+                        refreshed_point = (
+                            round(point[0] * fresh.shape[1] / frame.shape[1]),
+                            round(point[1] * fresh.shape[0] / frame.shape[0]),
+                        )
+                        self.vision.click_client(
+                            refreshed_point, fresh.shape, after_sleep=WALK_CLICK_SETTLE_SECONDS,
+                        )
+                        started = self._exit_walk_started(current_title, require_movement=True)
+                        if started is not None:
+                            return started
+                        if not self._click_activity_exit_picker(target, edge=edge):
+                            return False
+                self._status("导航状态", "活动出口补点3次后仍未确认自动移动")
+                return False
         return False
 
-    def _exit_walk_started(self, current_title: str) -> bool | None:
+    def _exit_walk_started(
+        self, current_title: str, *, require_movement: bool = False,
+    ) -> bool | None:
         """Return None only while the original map remains without a walk dialog."""
         frame = self.vision.capture()
         text = self._walk_text(frame)
@@ -2748,7 +2907,7 @@ class SandboxNavigationMixin:
         if not any(word in text for word in AUTO_MOVE_QUESTION_KEYWORDS):
             if current_title in self._field_map_header(frame):
                 return None
-            return self._exit_walk_departed(frame, text)
+            return self._exit_walk_departed(frame, text, require_movement=require_movement)
 
         # An exit may ask for confirmation while its map title remains visible.
         # Once the question appears, no later exit coordinate may hit the dialog.
@@ -2763,22 +2922,30 @@ class SandboxNavigationMixin:
                 word in text for word in AUTO_MOVE_QUESTION_KEYWORDS
             ):
                 if current_title in self._field_map_header(frame):
-                    return self._close_field_map()
-                if self._exit_walk_departed(frame, text):
+                    if not self._close_field_map():
+                        return False
+                    if not require_movement:
+                        return True
+                elif self._exit_walk_departed(frame, text, require_movement=require_movement):
                     return True
             if monotonic() >= end_at:
                 self._click_auto_move_dialog_button(self.vision.capture(), "取消")
                 return False
             self.task.sleep(SANDBOX_NAVIGATION_OCR_INTERVAL)
 
-    def _exit_walk_departed(self, frame: np.ndarray, text: str) -> bool:
+    def _exit_walk_departed(
+        self, frame: np.ndarray, text: str, *, require_movement: bool = False,
+    ) -> bool:
         """The map gave way to the walk: its banner, a patrol toast, a black
         transition, or a confirmed field/loading page.  Anything else stays unproven."""
         return (
             "移动中" in text
             or any(word in text for word in WALK_CAUGHT_KEYWORDS)
             or self._black_frame(frame)
-            or self.classify(frame) in {ScreenState.SANDBOX, ScreenState.LOADING}
+            or self.classify(frame) in (
+                {ScreenState.LOADING} if require_movement
+                else {ScreenState.SANDBOX, ScreenState.LOADING}
+            )
         )
 
     def _click_auto_move_dialog_button(self, frame: np.ndarray, label: str) -> bool:
@@ -2807,16 +2974,52 @@ class SandboxNavigationMixin:
         self.vision.click_client(center, frame.shape, after_sleep=0.8)
         return True
 
-    def _click_activity_exit_picker(self, target: CollectionMapTarget) -> bool:
+    def _click_activity_exit_picker(self, target: CollectionMapTarget, *, edge=None) -> bool:
         frame = self.vision.capture()
         wanted = "安全区" if target.role is CollectionMapRole.MAIN_AREA else "战斗区"
         boxes = self.vision.ocr_boxes(
             frame, "活动出口列表", relative_roi=AREA_MAP_EXIT_LABEL_RELATIVE_ROI,
         )
         rows = [box for box in boxes if wanted in normalize_text(str(box.name))]
+        upper_exit = edge == ACTIVITY_UPPER_BATTLE_EXIT
+        if upper_exit:
+            # 海岸沙滩到海岸椰林已核验为上方入口，须先确认两个同名菜单行。
+            enlarged = self.vision.ocr_boxes(
+                frame, "活动出口列表复核", relative_roi=AREA_MAP_EXIT_LABEL_RELATIVE_ROI,
+                ocr_scale=2.0, target_height=0,
+            )
+            distinct = []
+            for box in [*rows, *enlarged]:
+                if wanted not in normalize_text(str(box.name)) or self._ocr_box_center(box) is None:
+                    continue
+                if not any(
+                    max(box.x, old.x) < min(box.x + box.width, old.x + old.width)
+                    and max(box.y, old.y) < min(box.y + box.height, old.y + old.height)
+                    for old in distinct
+                ):
+                    distinct.append(box)
+            distinct.sort(key=lambda box: box.y)
+            if (
+                len(distinct) != 2
+                or distinct[0].y + distinct[0].height > distinct[1].y
+                or max(distinct[0].x, distinct[1].x) >= min(
+                    distinct[0].x + distinct[0].width, distinct[1].x + distinct[1].width,
+                )
+            ):
+                self._status("活动出口点击", "海岸椰林双入口未完整确认，停止点击")
+                return False
+            rows = distinct[:1]
         if len(rows) != 1 or (point := self._ocr_box_center(rows[0])) is None:
             return False
-        self.vision.click_client(point, frame.shape, after_sleep=WALK_CLICK_SETTLE_SECONDS)
+        self._status(
+            "活动出口点击",
+            f"{wanted}; center={point}; 按住{ACTIVITY_EXIT_PRESS_SECONDS:.3f}秒"
+            + ("；海岸椰林上方入口" if upper_exit else ""),
+        )
+        self.vision.click_client(
+            point, frame.shape, after_sleep=WALK_CLICK_SETTLE_SECONDS,
+            down_time=ACTIVITY_EXIT_PRESS_SECONDS,
+        )
         return True
 
     def _exit_label_points(self, frame, target: CollectionMapTarget) -> list[tuple[int, int]]:

@@ -10,6 +10,8 @@ from time import monotonic
 from src.tasks.map_trade.action_icons import (
     ABSORB_ICON,
     SEARCH_ICON,
+    SUBDUE_ICON,
+    SUMMON_ICON,
     ActionIconDetection,
     ActionIconSpec,
     ActionIconState,
@@ -337,12 +339,33 @@ class SkillExecutionMixin:
 
         self._last_skill_observations = {}
         self._last_skill_geometry = {}
+        self._skill_layout_checked = False
+
+    def _check_collection_skill_layout(self) -> None:
+        if self._skill_layout_checked:
+            return
+        expected = (SEARCH_ICON, ABSORB_ICON, SUMMON_ICON, SUBDUE_ICON)
+        previous = ()
+        for sample in range(2):
+            frame, recovered = self._capture_skill_field()
+            missing = tuple(
+                icon for icon in expected
+                if self.action_icons.detect(frame, icon).state is ActionIconState.ABSENT
+            )
+            conflicts = self.action_icons.layout_conflicts(frame, missing)
+            if conflicts and conflicts == previous and not recovered:
+                raise RuntimeError("采集技能栏位置不符：" + "；".join(conflicts))
+            previous = conflicts
+            if sample == 0:
+                self.task.sleep(ACTION_ICON_DETECTION_INTERVAL)
+        self._skill_layout_checked = True
 
     def _open_skill_menu(
         self,
         expected_icons: tuple[ActionIconSpec, ...],
         *,
         allow_group_one_recovery: bool = False,
+        warn_on_failure: bool = True,
     ) -> bool:
         def inspect(frame):
             detections = tuple(self.action_icons.detect(frame, icon) for icon in expected_icons)
@@ -390,14 +413,16 @@ class SkillExecutionMixin:
 
         detections, opened = inspect_window()
         if opened or self._counts_prove_menu(expected_icons):
+            self._check_collection_skill_layout()
             return True
 
+        log_failure = self.task.log_warning if warn_on_failure else self.task.log_info
         states = ", ".join(
             f"{icon.name}={value.state.value}"
             for icon, value in zip(expected_icons, detections, strict=True)
         )
         if not allow_group_one_recovery:
-            self.task.log_warning(f"地图采集：技能栏未确认：{states}。")
+            log_failure(f"地图采集：技能栏未确认：{states}。")
             return False
 
         # A partial match is not evidence that the wrong group is selected.
@@ -408,7 +433,7 @@ class SkillExecutionMixin:
             value.state in {ActionIconState.ABSENT, ActionIconState.UNKNOWN}
             for value in detections
         ):
-            self.task.log_warning(
+            log_failure(
                 f"地图采集：技能栏部分识别但未确认，不执行技能组1回退：{states}。"
             )
             return False
@@ -418,23 +443,26 @@ class SkillExecutionMixin:
             frame, _recovered = self._capture_skill_field()
             detections, opened = inspect(frame)
             if opened:
+                self._check_collection_skill_layout()
                 return True
             if any(
                 value.state not in {ActionIconState.ABSENT, ActionIconState.UNKNOWN}
                 for value in detections
             ):
-                self.task.log_warning("地图采集：技能栏部分识别，停止技能组切换。")
+                log_failure("地图采集：技能栏部分识别，停止技能组切换。")
                 return False
             self._status("技能组切换", f"采集技能未显示，切换到技能组{group}")
+            self._forget_skill_evidence()
             self.task.operate_click(*point, after_sleep=SKILL_GROUP_SWITCH_SETTLE_SECONDS)
             detections, opened = inspect_window()
             if opened or self._counts_prove_menu(expected_icons):
+                self._check_collection_skill_layout()
                 return True
         states = ", ".join(
             f"{icon.name}={value.state.value}"
             for icon, value in zip(expected_icons, detections, strict=True)
         )
-        self.task.log_warning(f"地图采集：三个技能组都没有找到采集技能：{states}。")
+        log_failure(f"地图采集：三个技能组都没有找到采集技能：{states}。")
         return False
 
     @staticmethod
@@ -589,6 +617,7 @@ class SkillExecutionMixin:
         allow_single: bool = False,
         expected_used: int | None = None,
         expected_limit: int | None = None,
+        require_fraction: bool = False,
     ) -> CountWindowObservation:
         """Return a compatible count; single-frame evidence requires allow_single explicitly."""
         known_limit = expected_limit
@@ -602,6 +631,7 @@ class SkillExecutionMixin:
                 count = self._read_count(
                     action, detection, ocr_scale=ocr_scale,
                     known_limit=known_limit, expected_used=expected_used,
+                    require_fraction=require_fraction,
                 )
                 if count is not None:
                     samples.append(count)
@@ -692,17 +722,19 @@ class SkillExecutionMixin:
         *,
         map_role: CollectionMapRole,
         card_id: str | None = None,
-        slot_fallback: bool = False,
     ) -> SearchCountdownSession | SkillExecutionResult:
         reused = self._reuse_recent_search(card_id, map_role)
         if reused is not None:
             return reused
         menu_confirmed = self._open_skill_menu(
-            (ABSORB_ICON,) if slot_fallback else (SEARCH_ICON, ABSORB_ICON),
+            (SEARCH_ICON, ABSORB_ICON),
             allow_group_one_recovery=True,
+            warn_on_failure=False,
         )
         if not menu_confirmed:
-            return SkillExecutionResult(False, message="未确认安全区技能栏")
+            return SkillExecutionResult(
+                False, message="未确认采集技能栏，请检查1号探查、2号吸收及当前技能组",
+            )
         search_action = SEARCH_ACTION
         frame, detection = self._detect_action_icon(
             search_action.icon,
@@ -710,25 +742,17 @@ class SkillExecutionMixin:
         )
         self._report_icon_detection(search_action, detection)
         can_click_search = detection.state is ActionIconState.AVAILABLE and detection.stable
-        if not can_click_search and not slot_fallback:
+        if not can_click_search:
             if detection.state is ActionIconState.ABSENT:
-                message = "未识别到探查图标"
+                message = "未识别到1号槽探查，请配置探查后重新运行"
             elif not detection.stable:
                 message = "探查图标未达到跨帧稳定确认"
             else:
                 message = f"探查图标状态不可点击：{detection.state.value}"
             return SkillExecutionResult(False, message=message)
         countdown_roi = SEARCH_COUNTDOWN_RELATIVE_ROI
-        if can_click_search:
-            center = detection.match.center
-        else:
-            left, top, right, bottom = countdown_roi
-            center = (
-                round((left + right) / 2 * frame.shape[1]),
-                round((top + bottom) / 2 * frame.shape[0]),
-            )
         self.vision.click_client(
-            center,
+            detection.match.center,
             frame.shape,
             after_sleep=ACTION_AFTER_CLICK_SECONDS,
         )
@@ -1108,16 +1132,20 @@ class SkillExecutionMixin:
         map_role: CollectionMapRole,
         observation: CountWindowObservation | None = None,
     ) -> tuple[tuple[int, int] | None, SkillExecutionResult | None]:
-        remaining_pending = self.progress.pending_count(action.name)
         # A fresh run may observe casts performed outside this task. During a
         # continuous run, changes must be covered by our recorded consumption.
         expected_used = (
             self.progress.effective_used(action.name)
-            if action.name in self._count_actions_seen or remaining_pending else None
+            if action.name in self._count_actions_seen else None
         )
-        if observation is None:
+        fresh_pending = (
+            action.name not in self._count_actions_seen
+            and self.progress.pending_count(action.name) > 0
+        )
+        if observation is None or fresh_pending:
             observation = self._read_count_window(
                 action, detection, expected_used=expected_used,
+                require_fraction=fresh_pending,
             )
         elif (
             observation.count is None or not observation.is_stable
@@ -1417,6 +1445,7 @@ class SkillExecutionMixin:
         known_limit: int | None = None,
         expected_used: int | None = None,
         frame=None,
+        require_fraction: bool = False,
     ) -> tuple[int, int] | None:
         # The calibrated fixed ROI is intentionally reused at 3x after a 2x
         # miss.  This catches the reproduced dark ``2`` without widening the
@@ -1449,6 +1478,8 @@ class SkillExecutionMixin:
                 )
             else:
                 return None
+            if require_fraction and not re.fullmatch(r"\s*\d+\s*[/YyVv]\s*\d+\s*", text):
+                continue
             # 完整分数携带当前技能容量；旧容量只帮助恢复丢失的分隔符。
             count = parse_used_limit(text, expected_used=expected_used)
             if count is None:
@@ -1534,15 +1565,19 @@ class SkillExecutionMixin:
             return reused
         if not self._open_skill_menu((ABSORB_ICON,), allow_group_one_recovery=True):
             return SkillExecutionResult(False, message="未确认采集技能栏")
-        if self._search_running():
-            return None
-        started = self._start_search(card_id=card_id, map_role=map_role, slot_fallback=True)
+        # 倒计时会覆盖探查图标，短暂漏读须先复核，避免误进入补施探查流程。
+        for attempt in range(ACTION_OCR_WINDOW_SAMPLES):
+            if self._search_running():
+                return None
+            if attempt + 1 < ACTION_OCR_WINDOW_SAMPLES:
+                self.task.sleep(SEARCH_COUNTDOWN_INTERVAL)
+        started = self._start_search(card_id=card_id, map_role=map_role)
         if not isinstance(started, SkillExecutionResult):
             return started
         self.task.sleep(1.0)
         if self._search_running():
             return None
-        return self._start_search(card_id=card_id, map_role=map_role, slot_fallback=True)
+        return self._start_search(card_id=card_id, map_role=map_role)
 
 COUNT_ACTIONS_BY_ICON = {
     action.icon.name: action for action in (ABSORB_ACTION, SUMMON_ACTION, SUPPRESS_ACTION)
