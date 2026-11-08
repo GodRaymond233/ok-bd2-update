@@ -17,6 +17,11 @@ class StartButton(PushButton):
         self.animation = QPropertyAnimation(self, b"color")
         self.update_paused(True)
         communicate.executor_paused.connect(self.update_paused)
+        communicate.executor_exclusive.connect(self.update_exclusive)
+        self.update_exclusive(getattr(og.executor, 'exclusive_owner', None))
+
+    def update_exclusive(self, owner):
+        self.setEnabled(owner is None)
 
     def update_paused(self, paused):
         if paused:
@@ -33,7 +38,7 @@ class StartButton(PushButton):
         if self.isChecked():
             logger.info("Click Start Executor")
             if not og.executor.start():
-                show_alert("Error", "No Task to Run, Please Enable Task First!")
+                show_alert(self.tr("Error"), self.tr("No Task to Run, Please Enable Task First!"))
                 self.setChecked(False)
         else:
             logger.info("Click Pause Executor")

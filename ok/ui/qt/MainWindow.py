@@ -7,7 +7,7 @@ from PySide6.QtGui import QColor, QScreen
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon, QApplication
 from qfluentwidgets import qconfig, FluentIcon, NavigationItemPosition, MessageBox, InfoBar, \
     InfoBarPosition, MessageBoxBase, FluentWindow, NavigationDisplayMode, isDarkTheme, Theme, \
-    DotInfoBadge, InfoBadgePosition
+    DotInfoBadge, InfoBadgePosition, PushButton
 from qfluentwidgets.components.widgets.scroll_bar import ScrollBarHandleDisplayMode
 from qfluentwidgets.common.style_sheet import updateStyleSheet
 
@@ -191,20 +191,36 @@ class MainWindow(FluentWindow):
             from ok.ui.qt.tasks.EditTaskTab import EditTaskTab
             self.edit_task_tab = EditTaskTab()
             self.addSubInterface(self.edit_task_tab, FluentIcon.EDIT, self.tr('Script'),
-                                 position=NavigationItemPosition.SCROLL)
+                                 position=NavigationItemPosition.BOTTOM)
 
         if og.task_manager.has_custom or debug:
             from ok.ui.qt.tasks.TemplateTab import TemplateTab
             self.template_tab = TemplateTab(config=config)
             self.addSubInterface(self.template_tab, FluentIcon.PHOTO, self.tr('Templates'),
                                  position=NavigationItemPosition.SCROLL)
+
+        self._add_plugin_tab()
+        bottom_tabs = [getattr(self, name, None) for name in ('edit_task_tab', 'plugin_tab')]
+        bottom_layout = self.navigationInterface.panel.bottomLayout
+        for index, tab in enumerate(tab for tab in bottom_tabs if tab is not None):
+            item = self.navigationInterface.widget(tab.objectName())
+            bottom_layout.removeWidget(item)
+            bottom_layout.insertWidget(index, item, 0, Qt.AlignBottom)
         
         # Initial load of imported tabs
         self.update_imported_tabs()
         communicate.task_list_updated.connect(self.update_imported_tabs)
 
-        # 添加计划任务Tab
-        any_support_schedule = any(task.support_schedule_task for task in visible_onetime_tasks)
+        # Resolve this launch from local metadata; Windows migration runs in
+        # ScheduleTaskTab's worker so COM cannot block window construction.
+        try:
+            from ok.ui.qt.tasks.schedule_index_sync import resolve_current_schedule_task
+            resolve_current_schedule_task()
+        except Exception:
+            logger.exception("schedule task index sync failed in __init__")
+
+        # 添加计划任务Tab（不要求任务 visible，未显示在 GUI 的任务也可计划调度）
+        any_support_schedule = any(task.support_schedule_task for task in self.executor.onetime_tasks)
         if any_support_schedule:
             from ok.ui.qt.tasks.ScheduleTaskTab import ScheduleTaskTab
             self.schedule_tab = ScheduleTaskTab(config=self.config)
@@ -248,6 +264,8 @@ class MainWindow(FluentWindow):
         self.setWindowTitle(f'{title} {version} {profile} {dev if debug else ""}')
 
         communicate.executor_paused.connect(self.executor_paused)
+        self.exclusive_bar = None
+        communicate.executor_exclusive.connect(self.executor_exclusive_changed)
         communicate.tab.connect(self.navigate_tab)
         menu = QMenu()
         exit_action = menu.addAction(self.tr("Exit"))
@@ -434,47 +452,17 @@ class MainWindow(FluentWindow):
 
     def update_imported_tabs(self):
         """Update navigation tabs for imported scripts."""
-        from ok import og
-        from ok.ui.qt.tasks.OneTimeTaskTab import OneTimeTaskTab
-        
-        imported_scripts = og.task_manager.imported_scripts
-        
-        # Remove tabs for scripts that no longer exist
-        scripts_to_remove = [
-            fn for fn in self.imported_tabs
-            if fn not in imported_scripts or not any(
-                getattr(task, 'visible', True) for task in imported_scripts[fn].get('tasks', [])
-            )
-        ]
-        for fn in scripts_to_remove:
-            tab = self.imported_tabs.pop(fn)
-            # Remove from navigation. MSFluentWindow provides navigation object
-            self.navigationInterface.removeWidget(tab.objectName())
-            self.stackedWidget.removeWidget(tab)
-            tab.deleteLater()
-            
-        # Add tabs for new scripts
-        for file_name, imp in imported_scripts.items():
-            if file_name not in self.imported_tabs:
-                script_name = imp['script_name']
-                tasks = [task for task in imp.get('tasks', []) if getattr(task, 'visible', True)]
-                if tasks:
-                    group_tab = OneTimeTaskTab(is_standalone=False, group_name=script_name)
-                    group_icon = resolve_icon(
-                        tasks[0].group_icon if hasattr(tasks[0], 'group_icon') else FluentIcon.APPLICATION)
-                    self.imported_tabs[file_name] = group_tab
-                    
-                    # Inserting after TemplateTab if it exists
-                    if hasattr(self, 'template_tab'):
-                        # Using our custom logic or standard addSubInterface
-                        # qfluentwidgets typically appends to the current section
-                        self.addSubInterface(group_tab, group_icon, self.app.tr(script_name),
-                                             position=NavigationItemPosition.SCROLL)
-                    else:
-                        self.addSubInterface(group_tab, group_icon, self.app.tr(script_name),
-                                             position=NavigationItemPosition.SCROLL)
+        from ok.ui.qt.plugins.imported_tabs import ImportedTabs
+        if not hasattr(self, '_imported_tab_controller'):
+            self._imported_tab_controller = ImportedTabs(self)
+        self._imported_tab_controller.refresh()
 
-        self.update_navigation_width()
+    def _add_plugin_tab(self):
+        if self.config.get('plugin', False):
+            from ok.ui.qt.plugins.PluginTab import PluginTab
+            self.plugin_tab = PluginTab()
+            self.addSubInterface(self.plugin_tab, FluentIcon.APPLICATION, self.plugin_tab.tr('Plugins'),
+                                 position=NavigationItemPosition.BOTTOM)
 
     def restart_admin(self):
         w = MessageBox(QCoreApplication.translate("app", "Alert"),
@@ -726,6 +714,9 @@ class MainWindow(FluentWindow):
             return self.grouped_task_tabs[0]
         if self.imported_tabs:
             return next(iter(self.imported_tabs.values()))
+        controller = getattr(self, '_imported_tab_controller', None)
+        if controller is not None and controller.custom_tabs:
+            return next(iter(controller.custom_tabs.values()))[0]
         return self.trigger_tab
 
     def executor_paused(self, paused):
@@ -733,6 +724,30 @@ class MainWindow(FluentWindow):
         if not paused and self.stackedWidget.currentIndex() == 0 and task_tab:
             self.switchTo(task_tab)
         self.show_notification(self.tr("Start Success.") if not paused else self.tr("Pause Success."), tray=False)
+
+    def executor_exclusive_changed(self, owner):
+        if self.exclusive_bar is not None:
+            try:
+                self.exclusive_bar.close()
+            except RuntimeError:
+                # Already deleted by Qt.
+                pass
+            self.exclusive_bar = None
+        if owner is None:
+            return
+        bar = InfoBar.warning(
+            title=self.tr('Remote Control'),
+            content=self.tr('{owner} is controlling the app. Other tasks are stopped.').format(owner=owner),
+            orient=Qt.Horizontal,
+            isClosable=False,
+            position=InfoBarPosition.TOP,
+            duration=-1,
+            parent=self
+        )
+        disconnect_button = PushButton(self.tr('Disconnect'), bar)
+        disconnect_button.clicked.connect(lambda: self.executor.release_exclusive(owner))
+        bar.addWidget(disconnect_button)
+        self.exclusive_bar = bar
 
     def _check_okscript_args(self):
         """Check sys.argv for .okscript files and import them."""
@@ -753,7 +768,7 @@ class MainWindow(FluentWindow):
                             show_info_bar(self.window(), message, title=self.tr('Success'))
                         else:
                             from ok.ui.qt.util.Alert import alert_error
-                            alert_error(f"Import failed: {message}")
+                            alert_error(self.tr("Import failed: {error}").format(error=message))
                 except Exception as e:
                     logger.error(f'Error importing .okscript file: {e}')
 

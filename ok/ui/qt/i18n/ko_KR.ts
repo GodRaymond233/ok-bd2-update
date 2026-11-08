@@ -93,6 +93,14 @@
             <source>Disclaimer</source>
             <translation>면책 조항</translation>
         </message>
+        <message>
+            <source>BrownDust II</source>
+            <translation>브라운더스트2</translation>
+        </message>
+        <message>
+            <source>Azur Promilia</source>
+            <translation>아주르 프로밀리아</translation>
+        </message>
     </context>
     <context>
         <name>ActWindow</name>
@@ -251,6 +259,22 @@
         <message>
             <source>No Capture Available or Selected</source>
             <translation>캡처 방식을 사용할 수 없거나 선택되지 않음</translation>
+        </message>
+        <message>
+            <source>Reload tasks</source>
+            <translation>작업 다시 불러오기</translation>
+        </message>
+        <message>
+            <source>Waiting to reload tasks...</source>
+            <translation>작업을 다시 불러오기를 기다리는 중…</translation>
+        </message>
+        <message>
+            <source>Reloaded {count} tasks</source>
+            <translation>작업 {count}개를 다시 불러왔습니다</translation>
+        </message>
+        <message>
+            <source>The app is controlled by {owner}</source>
+            <translation>{owner}이(가) 앱을 제어하고 있습니다</translation>
         </message>
     </context>
     <context>
@@ -470,6 +494,10 @@
             <source>Run Code</source>
             <translation>코드 실행</translation>
         </message>
+        <message>
+            <source>Import failed: {error}</source>
+            <translation>가져오기 실패: {error}</translation>
+        </message>
     </context>
     <context>
         <name>MessageWindow</name>
@@ -591,7 +619,7 @@
         </message>
         <message>
             <source>WGC</source>
-            <translation>WGC - &gt;=Win10, 빠름</translation>
+            <translation>WGC - 빠름, HDR 지원 (AutoHDR 미지원)</translation>
         </message>
         <message>
             <source>BitBlt</source>
@@ -600,6 +628,22 @@
         <message>
             <source>DXGI</source>
             <translation>DXGI - 가장 느림, 백업으로 사용</translation>
+        </message>
+        <message>
+            <source>WGC - Fast, support HDR (not AutoHDR)</source>
+            <translation>WGC - 빠름, HDR 지원 (AutoHDR 미지원)</translation>
+        </message>
+        <message>
+            <source>WGC_HDR - Only use when using AutoHDR (Not Recommended)</source>
+            <translation>WGC_HDR - AutoHDR 사용 시에만 사용 (권장하지 않음)</translation>
+        </message>
+        <message>
+            <source>Fast, support HDR (not AutoHDR)</source>
+            <translation>빠름, HDR 지원 (AutoHDR 미지원)</translation>
+        </message>
+        <message>
+            <source>Only use when using AutoHDR (Not Recommended)</source>
+            <translation>AutoHDR 사용 시에만 사용 (권장하지 않음)</translation>
         </message>
     </context>
     <context>
@@ -690,6 +734,14 @@
         <message>
             <source>Pause All</source>
             <translation>모두 일시 중지</translation>
+        </message>
+        <message>
+            <source>Error</source>
+            <translation>오류</translation>
+        </message>
+        <message>
+            <source>No Task to Run, Please Enable Task First!</source>
+            <translation>실행할 작업이 없습니다. 먼저 작업을 활성화해 주세요!</translation>
         </message>
     </context>
     <context>
@@ -841,6 +893,10 @@
             <source>GPU Driver Warning</source>
             <translation>GPU 드라이버 경고</translation>
         </message>
+        <message>
+            <source>Try using Alt+F3 to turn it off.</source>
+            <translation>Alt+F3을 눌러 꺼 보세요.</translation>
+        </message>
     </context>
     <context>
         <name>StartLoadingDialog</name>
@@ -938,6 +994,10 @@
         <message>
             <source>View Log</source>
             <translation>로그 보기</translation>
+        </message>
+        <message>
+            <source>Please Start First</source>
+            <translation>먼저 시작해 주세요</translation>
         </message>
     </context>
     <context>
@@ -1636,6 +1696,210 @@
         <message>
             <source>Requires the local WeChat client window to be open and running</source>
             <translation>로컬 WeChat 클라이언트 창이 열려 있고 실행 중이어야 합니다</translation>
+        </message>
+        <message>
+            <source>SMTP Notification</source>
+            <translation>SMTP 알림</translation>
+        </message>
+        <message>
+            <source>SMTP Host</source>
+            <translation>SMTP 호스트</translation>
+        </message>
+        <message>
+            <source>SMTP Port</source>
+            <translation>SMTP 포트</translation>
+        </message>
+        <message>
+            <source>SMTP Username</source>
+            <translation>사용자 이름</translation>
+        </message>
+        <message>
+            <source>SMTP Password</source>
+            <translation>비밀번호</translation>
+        </message>
+        <message>
+            <source>SMTP Use TLS</source>
+            <translation>암호화</translation>
+        </message>
+        <message>
+            <source>SMTP Default Sender</source>
+            <translation>발신자</translation>
+        </message>
+        <message>
+            <source>SMTP Default Recipient</source>
+            <translation>수신자</translation>
+        </message>
+        <message>
+            <source>Send notifications through an SMTP email server</source>
+            <translation>SMTP 메일 서버를 통해 알림 보내기</translation>
+        </message>
+        <message>
+            <source>SMTP server address (e.g. smtp.qq.com)</source>
+            <translation>SMTP 서버 주소 (예: smtp.qq.com)</translation>
+        </message>
+        <message>
+            <source>SMTP server port (587 for STARTTLS)</source>
+            <translation>SMTP 서버 포트 (STARTTLS는 587)</translation>
+        </message>
+        <message>
+            <source>Username for SMTP authentication (your own email address)</source>
+            <translation>인증용 사용자 이름 (자신의 이메일 주소 입력)</translation>
+        </message>
+        <message>
+            <source>Get an authorization code from your email settings</source>
+            <translation>메일 설정 화면에서 인증 코드를 받으세요</translation>
+        </message>
+        <message>
+            <source>Use STARTTLS encryption (recommended for port 587)</source>
+            <translation>STARTTLS 암호화 사용 (587 포트 권장)</translation>
+        </message>
+        <message>
+            <source>Sender email address</source>
+            <translation>발신자 이메일 주소</translation>
+        </message>
+        <message>
+            <source>Recipient email address(es), comma-separated</source>
+            <translation>수신자 이메일 주소 (여러 개는 쉼표로 구분)</translation>
+        </message>
+        <message>
+            <source>SMTP server port (587 or 465)</source>
+            <translation>SMTP 서버 포트 (587 또는 465)</translation>
+        </message>
+        <message>
+            <source>Enable TLS encryption (STARTTLS for 587, SMTPS for 465)</source>
+            <translation>TLS 암호화 활성화 (587 포트는 STARTTLS, 465 포트는 SMTPS)</translation>
+        </message>
+        <message>
+            <source>Auto HDR is enabled, tasks might not work correctly!</source>
+            <translation>자동 HDR이 켜져 있습니다. 작업이 올바르게 작동하지 않을 수 있습니다!</translation>
+        </message>
+        <message>
+            <source>WGC - Fast, support HDR (not AutoHDR)</source>
+            <translation>WGC - 빠름, HDR 지원 (AutoHDR 미지원)</translation>
+        </message>
+        <message>
+            <source>WGC_HDR - Only use when using AutoHDR (Not Recommended)</source>
+            <translation>WGC_HDR - AutoHDR 사용 시에만 사용 (권장하지 않음)</translation>
+        </message>
+        <message>
+            <source>Resolution {resolution} check failed, some tasks might not work correctly!</source>
+            <translation>해상도 {resolution} 확인 실패, 일부 작업이 올바르게 작동하지 않을 수 있습니다!</translation>
+        </message>
+        <message>
+            <source>, the supported ratio is {supported_ratio}</source>
+            <translation>, 지원되는 비율은 {supported_ratio} 입니다</translation>
+        </message>
+        <message>
+            <source>, the supported min resolution is {min_size}</source>
+            <translation>, 지원되는 최소 해상도는 {min_size} 입니다</translation>
+        </message>
+        <message>
+            <source>{vendor} {feature} is enabled and may cause malfunctions!</source>
+            <translation>{vendor} {feature} 기능이 활성화되어 있어 오작동을 일으킬 수 있습니다!</translation>
+        </message>
+        <message>
+            <source>GPU Driver Warning</source>
+            <translation>GPU 드라이버 경고</translation>
+        </message>
+        <message>
+            <source>Fast, support HDR (not AutoHDR)</source>
+            <translation>빠름, HDR 지원 (AutoHDR 미지원)</translation>
+        </message>
+        <message>
+            <source>Only use when using AutoHDR (Not Recommended)</source>
+            <translation>AutoHDR 사용 시에만 사용 (권장하지 않음)</translation>
+        </message>
+        <message>
+            <source>Try using Alt+F3 to turn it off.</source>
+            <translation>Alt+F3을 눌러 꺼 보세요.</translation>
+        </message>
+        <message>
+            <source>Enable MCP Server</source>
+            <translation>MCP 서버 활성화</translation>
+        </message>
+        <message>
+            <source>Allow local coding agents to control this app and run Python code</source>
+            <translation>로컬 코딩 에이전트가 이 앱을 제어하고 Python 코드를 실행하도록 허용</translation>
+        </message>
+        <message>
+            <source>PC version requires admin privileges, Please restart this app with admin privileges!</source>
+            <translation>PC 버전은 관리자 권한이 필요합니다. 관리자 권한으로 이 앱을 다시 시작하세요!</translation>
+        </message>
+        <message>
+            <source>No game selected!</source>
+            <translation>게임을 선택하지 않았습니다!</translation>
+        </message>
+        <message>
+            <source>Capture failed, please check game window</source>
+            <translation>캡처 실패, 게임 창을 확인하세요</translation>
+        </message>
+        <message>
+            <source>Game path does not exist, Please open game manually!</source>
+            <translation>게임 경로가 없습니다. 게임을 수동으로 시작하세요!</translation>
+        </message>
+        <message>
+            <source>Start game timeout!</source>
+            <translation>시작 시간 초과!</translation>
+        </message>
+        <message>
+            <source>Window is minimized or out of screen, and don't use full-screen exclusive mode!</source>
+            <translation>창이 최소화되었거나 화면 밖에 있습니다. 전체 화면 전용 모드를 사용하지 마세요!</translation>
+        </message>
+        <message>
+            <source>Start game failed, please start game first</source>
+            <translation>게임 시작 실패, 먼저 게임을 수동으로 시작하세요!</translation>
+        </message>
+        <message>
+            <source>{} is not connected, please select the game window.</source>
+            <translation>{}게임 창이 연결되지 않았습니다. 게임 창과 캡처 방법을 선택하세요.</translation>
+        </message>
+        <message>
+            <source>Selected capture method is not supported by the game or your system!</source>
+            <translation>선택한 캡처 방법이 게임 또는 시스템에서 지원되지 않습니다!</translation>
+        </message>
+        <message>
+            <source>Image resource load failed, please try install again.(Don't put the app in Downloads folder)</source>
+            <translation>이미지 리소스 로드 실패, 다시 설치해 보세요. (앱을 다운로드 폴더에 두지 마세요)</translation>
+        </message>
+        <message>
+            <source>Emulator is not connected, start the emulator first!</source>
+            <translation>에뮬레이터가 연결되지 않았습니다. 먼저 에뮬레이터를 시작하세요!</translation>
+        </message>
+        <message>
+            <source>Can't start game, make sure the game is installed</source>
+            <translation>게임을 시작할 수 없습니다. 게임이 설치되었는지 확인하세요</translation>
+        </message>
+        <message>
+            <source>NPU inferring Error, you might need to update the Intel NPU driver!</source>
+            <translation>NPU 추론 오류, Intel NPU 드라이버를 업데이트해야 할 수 있습니다!</translation>
+        </message>
+        <message>
+            <source>Export failed</source>
+            <translation>내보내기 실패</translation>
+        </message>
+        <message>
+            <source>Cannot start: the app is controlled by {owner}</source>
+            <translation>시작할 수 없습니다: {owner}이(가) 앱을 제어하고 있습니다</translation>
+        </message>
+        <message>
+            <source>Cannot start {name}: the app is controlled by {owner}</source>
+            <translation>{name}을(를) 시작할 수 없습니다: {owner}이(가) 앱을 제어하고 있습니다</translation>
+        </message>
+        <message>
+            <source>Start failed: {error}</source>
+            <translation>시작 실패: {error}</translation>
+        </message>
+        <message>
+            <source>Windows Graphics Capture is busy</source>
+            <translation>Windows Graphics Capture가 사용 중입니다</translation>
+        </message>
+        <message>
+            <source>Windows Graphics Capture is not supported on this system.</source>
+            <translation>이 시스템은 Windows Graphics Capture를 지원하지 않습니다.</translation>
+        </message>
+        <message>
+            <source>Paused because browser exited</source>
+            <translation>브라우저가 종료되어 일시 중지되었습니다</translation>
         </message>
     </context>
     <context>
@@ -2642,6 +2906,18 @@
             <source>Guide</source>
             <translation>가이드</translation>
         </message>
+        <message>
+            <source>Error deleting task: {error}</source>
+            <translation>작업 삭제 중 오류 발생: {error}</translation>
+        </message>
+        <message>
+            <source>Error creating task: {error}</source>
+            <translation>작업 생성 중 오류 발생: {error}</translation>
+        </message>
+        <message>
+            <source>Error copying task: {error}</source>
+            <translation>작업 복사 중 오류 발생: {error}</translation>
+        </message>
     </context>
     <context>
         <name>CreateTaskDialog</name>
@@ -2791,6 +3067,34 @@
             <source>Invalid relative path. Example: ok_tasks/LabelEnum.py</source>
             <translation>잘못된 상대 경로입니다. 예: ok_tasks/LabelEnum.py</translation>
         </message>
+        <message>
+            <source>Generate function</source>
+            <translation>생성 방식</translation>
+        </message>
+        <message>
+            <source>Split(Recommend)</source>
+            <translation>분할(권장)</translation>
+        </message>
+        <message>
+            <source>Compress (obsolete)</source>
+            <translation>압축(사용 중단)</translation>
+        </message>
+        <message>
+            <source>Screenshot failed: {e}</source>
+            <translation>스크린샷 촬영 실패: {e}</translation>
+        </message>
+        <message>
+            <source>Save failed: {e}</source>
+            <translation>저장 실패: {e}</translation>
+        </message>
+        <message>
+            <source>Delete failed: {e}</source>
+            <translation>삭제 실패: {e}</translation>
+        </message>
+        <message>
+            <source>Could not write screenshot to {path}</source>
+            <translation>{path}에 스크린샷을 저장할 수 없습니다</translation>
+        </message>
     </context>
     <context>
         <name>TemplateInputDialog</name>
@@ -2801,6 +3105,10 @@
         <message>
             <source>Cancel</source>
             <translation>취소</translation>
+        </message>
+        <message>
+            <source>Parameter '{param_name}' is required!</source>
+            <translation>'{param_name}' 매개변수는 필수입니다!</translation>
         </message>
     </context>
     <context>
@@ -2902,733 +3210,6 @@
         </message>
     </context>
     <context>
-        <name>WebUI</name>
-        <message>
-            <source>Automation control</source>
-            <translation>자동화 제어</translation>
-        </message>
-        <message>
-            <source>A local command center for tasks, triggers, and runtime events.</source>
-            <translation>작업, 트리거 및 런타임 이벤트를 위한 로컬 제어 센터입니다.</translation>
-        </message>
-        <message>
-            <source>Live</source>
-            <translation>실시간</translation>
-        </message>
-        <message>
-            <source>Reconnecting</source>
-            <translation>재연결 중</translation>
-        </message>
-        <message>
-            <source>Runtime error</source>
-            <translation>런타임 오류</translation>
-        </message>
-        <message>
-            <source>Executor</source>
-            <translation>실행기</translation>
-        </message>
-        <message>
-            <source>Idle</source>
-            <translation>대기</translation>
-        </message>
-        <message>
-            <source>Current task</source>
-            <translation>현재 작업</translation>
-        </message>
-        <message>
-            <source>None</source>
-            <translation>없음</translation>
-        </message>
-        <message>
-            <source>Resume</source>
-            <translation>재개</translation>
-        </message>
-        <message>
-            <source>Pause</source>
-            <translation>일시 중지</translation>
-        </message>
-        <message>
-            <source>Stop task</source>
-            <translation>작업 중지</translation>
-        </message>
-        <message>
-            <source>Tasks</source>
-            <translation>작업</translation>
-        </message>
-        <message>
-            <source>{count} available</source>
-            <translation>{count}개 사용 가능</translation>
-        </message>
-        <message>
-            <source>Filter tasks</source>
-            <translation>작업 필터</translation>
-        </message>
-        <message>
-            <source>Refresh tasks</source>
-            <translation>작업 새로 고침</translation>
-        </message>
-        <message>
-            <source>Refresh</source>
-            <translation>새로 고침</translation>
-        </message>
-        <message>
-            <source>Trigger</source>
-            <translation>트리거</translation>
-        </message>
-        <message>
-            <source>One-time</source>
-            <translation>일회성</translation>
-        </message>
-        <message>
-            <source>Running</source>
-            <translation>실행 중</translation>
-        </message>
-        <message>
-            <source>Paused</source>
-            <translation>일시 중지됨</translation>
-        </message>
-        <message>
-            <source>Start</source>
-            <translation>시작</translation>
-        </message>
-        <message>
-            <source>No tasks match “{query}”.</source>
-            <translation>“{query}”와 일치하는 작업이 없습니다.</translation>
-        </message>
-        <message>
-            <source>Live events</source>
-            <translation>실시간 이벤트</translation>
-        </message>
-        <message>
-            <source>Latest 100 messages</source>
-            <translation>최근 메시지 100개</translation>
-        </message>
-        <message>
-            <source>Clear</source>
-            <translation>지우기</translation>
-        </message>
-        <message>
-            <source>Waiting for runtime events…</source>
-            <translation>런타임 이벤트 대기 중…</translation>
-        </message>
-        <message>
-            <source>Could not reach the automation runtime</source>
-            <translation>자동화 런타임에 연결할 수 없습니다</translation>
-        </message>
-        <message>
-            <source>Request failed</source>
-            <translation>요청 실패</translation>
-        </message>
-        <message>
-            <source>Action failed</source>
-            <translation>작업 실패</translation>
-        </message>
-        <message>
-            <source>Back</source>
-            <translation>뒤로</translation>
-        </message>
-        <message>
-            <source>Capture</source>
-            <translation>캡처 방식</translation>
-        </message>
-        <message>
-            <source>Capture Method</source>
-            <translation>캡처 방식</translation>
-        </message>
-        <message>
-            <source>Choose Interaction</source>
-            <translation>상호 작용 선택</translation>
-        </message>
-        <message>
-            <source>Choose Window</source>
-            <translation>창 선택</translation>
-        </message>
-        <message>
-            <source>Close</source>
-            <translation>닫기</translation>
-        </message>
-        <message>
-            <source>Debug</source>
-            <translation>개발 도구</translation>
-        </message>
-        <message>
-            <source>Disable Boxes</source>
-            <translation>박스 사용 안 함</translation>
-        </message>
-        <message>
-            <source>Disconnected</source>
-            <translation>연결 끊김</translation>
-        </message>
-        <message>
-            <source>Enable Boxes</source>
-            <translation>박스 사용</translation>
-        </message>
-        <message>
-            <source>Export Logs</source>
-            <translation>로그 내보내기</translation>
-        </message>
-        <message>
-            <source>Install Folder</source>
-            <translation>설치 폴더</translation>
-        </message>
-        <message>
-            <source>Loading</source>
-            <translation>로딩 중</translation>
-        </message>
-        <message>
-            <source>Log Folder</source>
-            <translation>로그 폴더</translation>
-        </message>
-        <message>
-            <source>Maximize</source>
-            <translation>최대화</translation>
-        </message>
-        <message>
-            <source>Minimize</source>
-            <translation>최소화</translation>
-        </message>
-        <message>
-            <source>No options available</source>
-            <translation>사용할 수 있는 옵션이 없습니다</translation>
-        </message>
-        <message>
-            <source>No windows found</source>
-            <translation>창을 찾을 수 없습니다</translation>
-        </message>
-        <message>
-            <source>Refreshing</source>
-            <translation>새로고침 중</translation>
-        </message>
-        <message>
-            <source>Screenshot Folder</source>
-            <translation>스크린샷 폴더</translation>
-        </message>
-        <message>
-            <source>Search title or exe...</source>
-            <translation>제목 또는 실행 파일 검색...</translation>
-        </message>
-        <message>
-            <source>Toggle navigation</source>
-            <translation>탐색 메뉴 전환</translation>
-        </message>
-        <message>
-            <source>View Log</source>
-            <translation>로그 보기</translation>
-        </message>
-        <message>
-            <source>{page} is not available in the web UI yet.</source>
-            <translation>{page} 페이지는 아직 Web UI에서 사용할 수 없습니다.</translation>
-        </message>
-        <message>
-            <source>About</source>
-            <translation>정보</translation>
-        </message>
-        <message>
-            <source>Character Code</source>
-            <translation>캐릭터 코드</translation>
-        </message>
-        <message>
-            <source>Character Settings</source>
-            <translation>캐릭터 설정</translation>
-        </message>
-        <message>
-            <source>Game Hotkeys</source>
-            <translation>게임 단축키</translation>
-        </message>
-        <message>
-            <source>Notifications</source>
-            <translation>알림</translation>
-        </message>
-        <message>
-            <source>Schedule</source>
-            <translation>일정</translation>
-        </message>
-        <message>
-            <source>Script</source>
-            <translation>스크립트</translation>
-        </message>
-        <message>
-            <source>Settings</source>
-            <translation>설정</translation>
-        </message>
-        <message>
-            <source>Templates</source>
-            <translation>템플릿</translation>
-        </message>
-        <message>
-            <source>Triggers</source>
-            <translation>실시간 트리거</translation>
-        </message>
-        <message>
-            <source>All Levels</source>
-            <translation>모든 레벨</translation>
-        </message>
-        <message>
-            <source>Capture Preview</source>
-            <translation>캡처 미리보기</translation>
-        </message>
-        <message>
-            <source>Captured game frame</source>
-            <translation>캡처된 게임 화면</translation>
-        </message>
-        <message>
-            <source>Could not load logs</source>
-            <translation>로그를 불러올 수 없습니다</translation>
-        </message>
-        <message>
-            <source>Filter logs...</source>
-            <translation>로그 필터...</translation>
-        </message>
-        <message>
-            <source>Log level</source>
-            <translation>로그 레벨</translation>
-        </message>
-        <message>
-            <source>Waiting for ok-script.log</source>
-            <translation>ok-script.log 대기 중</translation>
-        </message>
-        <message>
-            <source>lines</source>
-            <translation>줄</translation>
-        </message>
-        <message>
-            <source>Open Screenshot Folder</source>
-            <translation>스크린샷 폴더 열기</translation>
-        </message>
-        <message>
-            <source>Completed</source>
-            <translation>완료됨</translation>
-        </message>
-        <message>
-            <source>Time Elapsed</source>
-            <translation>경과 시간</translation>
-        </message>
-        <message>
-            <source>Waiting for {task_name} task to be completed</source>
-            <translation>{task_name} 작업 완료 대기 중</translation>
-        </message>
-        <message>
-            <source>Instructions</source>
-            <translation>사용 설명</translation>
-        </message>
-        <message>
-            <source>Enabled</source>
-            <translation>활성화됨</translation>
-        </message>
-        <message>
-            <source>Disabled</source>
-            <translation>비활성화됨</translation>
-        </message>
-        <message>
-            <source>Stop</source>
-            <translation>중지</translation>
-        </message>
-        <message>
-            <source>Reset Config</source>
-            <translation>설정 초기화</translation>
-        </message>
-        <message>
-            <source>App Config</source>
-            <translation>앱 설정</translation>
-        </message>
-        <message>
-            <source>Application Theme</source>
-            <translation>애플리케이션 테마</translation>
-        </message>
-        <message>
-            <source>Change the appearance of the application</source>
-            <translation>애플리케이션의 모양 변경</translation>
-        </message>
-        <message>
-            <source>Light</source>
-            <translation>밝게</translation>
-        </message>
-        <message>
-            <source>Dark</source>
-            <translation>어둡게</translation>
-        </message>
-        <message>
-            <source>Use system setting</source>
-            <translation>시스템 설정 사용</translation>
-        </message>
-        <message>
-            <source>Language</source>
-            <translation>언어</translation>
-        </message>
-        <message>
-            <source>Set your preferred language</source>
-            <translation>선호하는 언어 설정</translation>
-        </message>
-        <message>
-            <source>Actions</source>
-            <translation>작업</translation>
-        </message>
-        <message>
-            <source>Add</source>
-            <translation>추가</translation>
-        </message>
-        <message>
-            <source>Auto Exit After Task</source>
-            <translation>Auto Exit After Task</translation>
-        </message>
-        <message>
-            <source>Available Options</source>
-            <translation>사용 가능한 옵션</translation>
-        </message>
-        <message>
-            <source>Bounding Box</source>
-            <translation>바운딩 박스</translation>
-        </message>
-        <message>
-            <source>Cancel</source>
-            <translation>취소</translation>
-        </message>
-        <message>
-            <source>Category name</source>
-            <translation>카테고리 이름</translation>
-        </message>
-        <message>
-            <source>Choose Task:</source>
-            <translation>작업 선택:</translation>
-        </message>
-        <message>
-            <source>Class Name (English only)</source>
-            <translation>클래스 이름 (영어만)</translation>
-        </message>
-        <message>
-            <source>Confirm</source>
-            <translation>확인</translation>
-        </message>
-        <message>
-            <source>Confirm Delete</source>
-            <translation>삭제 확인</translation>
-        </message>
-        <message>
-            <source>Copy Task</source>
-            <translation>작업 복사</translation>
-        </message>
-        <message>
-            <source>Create</source>
-            <translation>생성</translation>
-        </message>
-        <message>
-            <source>Create New Task</source>
-            <translation>새 작업 생성</translation>
-        </message>
-        <message>
-            <source>Create Schedule Task</source>
-            <translation>예약 작업 생성</translation>
-        </message>
-        <message>
-            <source>Create Task</source>
-            <translation>작업 생성</translation>
-        </message>
-        <message>
-            <source>Current App</source>
-            <translation>Current App</translation>
-        </message>
-        <message>
-            <source>Days</source>
-            <translation>일</translation>
-        </message>
-        <message>
-            <source>Delete</source>
-            <translation>삭제</translation>
-        </message>
-        <message>
-            <source>Delete Task</source>
-            <translation>작업 삭제</translation>
-        </message>
-        <message>
-            <source>Description (Optional)</source>
-            <translation>설명 (선택)</translation>
-        </message>
-        <message>
-            <source>File</source>
-            <translation>파일</translation>
-        </message>
-        <message>
-            <source>Generate label enum file</source>
-            <translation>레이블 enum 파일 생성</translation>
-        </message>
-        <message>
-            <source>Guide</source>
-            <translation>가이드</translation>
-        </message>
-        <message>
-            <source>Hour</source>
-            <translation>시간</translation>
-        </message>
-        <message>
-            <source>Hours</source>
-            <translation>시간</translation>
-        </message>
-        <message>
-            <source>Markup</source>
-            <translation>마크업</translation>
-        </message>
-        <message>
-            <source>Minute</source>
-            <translation>분</translation>
-        </message>
-        <message>
-            <source>Modify</source>
-            <translation>수정</translation>
-        </message>
-        <message>
-            <source>Modify Schedule Task</source>
-            <translation>예약 작업 수정</translation>
-        </message>
-        <message>
-            <source>Move Down</source>
-            <translation>아래로 이동</translation>
-        </message>
-        <message>
-            <source>Move Up</source>
-            <translation>위로 이동</translation>
-        </message>
-        <message>
-            <source>Next Run</source>
-            <translation>다음 실행</translation>
-        </message>
-        <message>
-            <source>No templates yet</source>
-            <translation>템플릿이 없습니다</translation>
-        </message>
-        <message>
-            <source>OK</source>
-            <translation>확인</translation>
-        </message>
-        <message>
-            <source>Other Projects</source>
-            <translation>관련 프로젝트</translation>
-        </message>
-        <message>
-            <source>Relative path, e.g. ok_tasks/LabelEnum.py</source>
-            <translation>상대 경로, 예: ok_tasks/LabelEnum.py</translation>
-        </message>
-        <message>
-            <source>Remove</source>
-            <translation>제거</translation>
-        </message>
-        <message>
-            <source>Run</source>
-            <translation>실행</translation>
-        </message>
-        <message>
-            <source>Save</source>
-            <translation>저장</translation>
-        </message>
-        <message>
-            <source>Save To</source>
-            <translation>저장 위치</translation>
-        </message>
-        <message>
-            <source>Saved</source>
-            <translation>Saved</translation>
-        </message>
-        <message>
-            <source>Screenshot</source>
-            <translation>스크린샷</translation>
-        </message>
-        <message>
-            <source>Search by name or category...</source>
-            <translation>이름 또는 카테고리로 검색...</translation>
-        </message>
-        <message>
-            <source>Search templates...</source>
-            <translation>템플릿 검색...</translation>
-        </message>
-        <message>
-            <source>Select Task</source>
-            <translation>작업 선택</translation>
-        </message>
-        <message>
-            <source>Select task to edit</source>
-            <translation>Select task to edit</translation>
-        </message>
-        <message>
-            <source>Selected Options</source>
-            <translation>선택한 옵션</translation>
-        </message>
-        <message>
-            <source>Status</source>
-            <translation>상태</translation>
-        </message>
-        <message>
-            <source>Take Screenshot</source>
-            <translation>스크린샷 촬영</translation>
-        </message>
-        <message>
-            <source>Task Name</source>
-            <translation>작업 이름</translation>
-        </message>
-        <message>
-            <source>Task rebuilt successfully.</source>
-            <translation>작업이 성공적으로 재구성되었습니다.</translation>
-        </message>
-        <message>
-            <source>Timeout</source>
-            <translation>시간 초과</translation>
-        </message>
-        <message>
-            <source>Trigger Type</source>
-            <translation>트리거 유형</translation>
-        </message>
-        <message>
-            <source>assets (standalone app)</source>
-            <translation>assets (독립 실행형 앱)</translation>
-        </message>
-        <message>
-            <source>ok_tasks/assets (custom scripts)</source>
-            <translation>ok_tasks/assets (사용자 스크립트)</translation>
-        </message>
-        <message>
-            <source>GitHub</source>
-            <translation>GitHub</translation>
-        </message>
-        <message>
-            <source>FAQ</source>
-            <translation>FAQ</translation>
-        </message>
-        <message>
-            <source>Website</source>
-            <translation>웹사이트</translation>
-        </message>
-        <message>
-            <source>ok-py Automation Tool</source>
-            <translation>ok-py 자동화 도구</translation>
-        </message>
-        <message>
-            <source>ok-script App Template</source>
-            <translation>ok-script 앱 템플릿</translation>
-        </message>
-        <message>
-            <source>Wuthering Waves</source>
-            <translation>명조: 워더링 웨이브</translation>
-        </message>
-        <message>
-            <source>Girls' Frontline 2</source>
-            <translation>소녀전선 2</translation>
-        </message>
-        <message>
-            <source>Star Resonance</source>
-            <translation>별의 공명</translation>
-        </message>
-        <message>
-            <source>Duet Night Abyss</source>
-            <translation>듀엣 나이트 어비스</translation>
-        </message>
-        <message>
-            <source>Chaos Zero Nightmare</source>
-            <translation>카오스 제로 나이트메어</translation>
-        </message>
-        <message>
-            <source>Onmyoji</source>
-            <translation>음양사</translation>
-        </message>
-        <message>
-            <source>Arknights: Endfield</source>
-            <translation>명일방주: 엔드필드</translation>
-        </message>
-        <message>
-            <source>Neverness to Everness</source>
-            <translation>이환</translation>
-        </message>
-        <message>
-            <source>Discord</source>
-            <translation>Discord</translation>
-        </message>
-        <message>
-            <source>Share</source>
-            <translation>다운로드 링크 공유</translation>
-        </message>
-        <message>
-            <source>Sponsor</source>
-            <translation>후원</translation>
-        </message>
-        <message>
-            <source>Share Link copied to clipboard</source>
-            <translation>공유 링크가 클립보드에 복사되었습니다</translation>
-        </message>
-        <message>
-            <source>Starting</source>
-            <translation>시작 중</translation>
-        </message>
-        <message>
-            <source>App update</source>
-            <translation>앱 업데이트</translation>
-        </message>
-        <message>
-            <source>Disclaimer</source>
-            <translation>면책 조항</translation>
-        </message>
-        <message>
-            <source>Check Test Version</source>
-            <translation>테스트 버전 확인</translation>
-        </message>
-        <message>
-            <source>Check for updates</source>
-            <translation>업데이트 확인</translation>
-        </message>
-        <message>
-            <source>Click to check for updates</source>
-            <translation>클릭하여 업데이트 확인</translation>
-        </message>
-        <message>
-            <source>Version</source>
-            <translation>버전</translation>
-        </message>
-        <message>
-            <source>Update</source>
-            <translation>업데이트</translation>
-        </message>
-        <message>
-            <source>Downgrade</source>
-            <translation>다운그레이드</translation>
-        </message>
-        <message>
-            <source>Current version</source>
-            <translation>현재 버전</translation>
-        </message>
-        <message>
-            <source>Checking for updates…</source>
-            <translation>업데이트 확인 중…</translation>
-        </message>
-        <message>
-            <source>Starting change to {version}…</source>
-            <translation>{version}(으)로 변경 시작 중…</translation>
-        </message>
-        <message>
-            <source>Failed to check for updates: {error}</source>
-            <translation>업데이트 확인 실패: {error}</translation>
-        </message>
-        <message>
-            <source>No versions are available.</source>
-            <translation>사용 가능한 버전이 없습니다.</translation>
-        </message>
-        <message>
-            <source>No updates available.</source>
-            <translation>사용 가능한 업데이트가 없습니다.</translation>
-        </message>
-        <message>
-            <source>No release notes.</source>
-            <translation>릴리스 노트가 없습니다.</translation>
-        </message>
-        <message>
-            <source>Update request accepted. The app will restart to apply it.</source>
-            <translation>업데이트 요청이 수락되었습니다. 적용을 위해 앱이 다시 시작됩니다.</translation>
-        </message>
-        <message>
-            <source>Failed to change version: {error}</source>
-            <translation>버전 변경 실패: {error}</translation>
-        </message>
-        <message>
-            <source>Update available.</source>
-            <translation>업데이트가 있습니다.</translation>
-        </message>
-    </context>
-    <context>
         <name>UpdateCard</name>
         <message>
             <source>Check Test Version</source>
@@ -3716,6 +3297,159 @@
         <message>
             <source>Download</source>
             <translation>다운로드</translation>
+        </message>
+    </context>
+    <context>
+        <name>PluginTab</name>
+        <message>
+            <source>Plugins</source>
+            <translation>플러그인</translation>
+        </message>
+        <message>
+            <source>Add from ZIP</source>
+            <translation>ZIP에서 추가</translation>
+        </message>
+        <message>
+            <source>Add from GitHub</source>
+            <translation>GitHub에서 추가</translation>
+        </message>
+        <message>
+            <source>No plugins installed.</source>
+            <translation>설치된 플러그인이 없습니다.</translation>
+        </message>
+        <message>
+            <source>Version: {}</source>
+            <translation>버전: {}</translation>
+        </message>
+        <message>
+            <source>Delete plugin</source>
+            <translation>플러그인 삭제</translation>
+        </message>
+        <message>
+            <source>Working…</source>
+            <translation>처리 중…</translation>
+        </message>
+        <message>
+            <source>Plugin operation failed: {}</source>
+            <translation>플러그인 작업 실패: {}</translation>
+        </message>
+        <message>
+            <source>Install plugin</source>
+            <translation>플러그인 설치</translation>
+        </message>
+        <message>
+            <source>GitHub repository</source>
+            <translation>GitHub 저장소</translation>
+        </message>
+        <message>
+            <source>Release asset</source>
+            <translation>릴리스 파일</translation>
+        </message>
+        <message>
+            <source>Plugin installed.</source>
+            <translation>플러그인이 설치되었습니다.</translation>
+        </message>
+        <message>
+            <source>Delete plugin "{}"?</source>
+            <translation>플러그인 "{}"을(를) 삭제할까요?</translation>
+        </message>
+        <message>
+            <source>Plugin deleted.</source>
+            <translation>플러그인이 삭제되었습니다.</translation>
+        </message>
+        <message>
+            <source>Check for updates</source>
+            <translation>업데이트 확인</translation>
+        </message>
+        <message>
+            <source>Update to {}</source>
+            <translation>{}(으)로 업데이트</translation>
+        </message>
+        <message>
+            <source>Update check failed: {}</source>
+            <translation>업데이트 확인 실패: {}</translation>
+        </message>
+        <message>
+            <source>Update available for {}: {}</source>
+            <translation>{}의 업데이트가 있습니다: {}</translation>
+        </message>
+        <message>
+            <source>Plugin is up to date.</source>
+            <translation>플러그인이 최신 버전입니다.</translation>
+        </message>
+        <message>
+            <source>Checking for updates…</source>
+            <translation>업데이트 확인 중…</translation>
+        </message>
+        <message>
+            <source>Restart the application to apply plugin changes.</source>
+            <translation>플러그인 변경 사항을 적용하려면 앱을 다시 시작하세요.</translation>
+        </message>
+        <message>
+            <source>Plugin change failed: {}</source>
+            <translation>플러그인 변경 실패: {}</translation>
+        </message>
+        <message>
+            <source>Update failed. Restart to restore the previous version.</source>
+            <translation>업데이트에 실패했습니다. 이전 버전을 복원하려면 다시 시작하세요.</translation>
+        </message>
+        <message>
+            <source>Deletion staged. Restart to apply.</source>
+            <translation>삭제가 예약되었습니다. 다시 시작하면 적용됩니다.</translation>
+        </message>
+        <message>
+            <source>Update staged: {}. Restart to apply.</source>
+            <translation>업데이트 준비 완료: {}. 다시 시작하면 적용됩니다.</translation>
+        </message>
+        <message>
+            <source>Cancel pending change</source>
+            <translation>대기 중인 변경 취소</translation>
+        </message>
+        <message>
+            <source>Backup cleanup pending. Restart to retry.</source>
+            <translation>백업 정리가 대기 중입니다. 다시 시작하여 재시도하세요.</translation>
+        </message>
+        <message>
+            <source>The release archive belongs to a different plugin</source>
+            <translation>이 릴리스 압축 파일은 다른 플러그인에 속합니다</translation>
+        </message>
+        <message>
+            <source>The release archive is not a newer plugin version</source>
+            <translation>이 릴리스 압축 파일은 더 최신 플러그인 버전이 아닙니다</translation>
+        </message>
+    </context>
+    <context>
+        <name>LabelAndMcpServer</name>
+        <message>
+            <source>Enable MCP Server?</source>
+            <translation>MCP 서버를 활성화하시겠습니까?</translation>
+        </message>
+        <message>
+            <source>MCP lets local coding agents control this app and execute Python code with your account permissions, including reading and changing files. Only connect trusted agents and keep the connection token private. Enable the server now?</source>
+            <translation>MCP를 사용하면 로컬 코딩 에이전트가 이 앱을 제어하고 파일 읽기 및 변경을 포함한 Python 코드를 사용자 계정 권한으로 실행할 수 있습니다. 신뢰할 수 있는 에이전트만 연결하고 연결 토큰을 비공개로 유지하세요. 지금 서버를 활성화하시겠습니까?</translation>
+        </message>
+        <message>
+            <source>MCP server error</source>
+            <translation>MCP 서버 오류</translation>
+        </message>
+        <message>
+            <source>Yes</source>
+            <translation>예</translation>
+        </message>
+        <message>
+            <source>No</source>
+            <translation>아니요</translation>
+        </message>
+    </context>
+    <context>
+        <name>JobControls</name>
+        <message>
+            <source>The app is controlled by {owner}</source>
+            <translation>{owner}이(가) 앱을 제어하고 있습니다</translation>
+        </message>
+        <message>
+            <source>Failed after {seconds}s</source>
+            <translation>{seconds}초 후 실패</translation>
         </message>
     </context>
 </TS>

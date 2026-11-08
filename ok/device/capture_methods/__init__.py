@@ -1,5 +1,5 @@
 from ok.device.capture_methods.adb import ADBCaptureMethod
-from ok.device.capture_methods.base import BaseCaptureMethod, BaseWindowsCaptureMethod
+from ok.device.capture_methods.base import CAPTURE_BUSY_WAIT, BaseCaptureMethod, BaseWindowsCaptureMethod
 from ok.device.capture_methods.bitblt import BitBltCaptureMethod, ForegroundBitBltCaptureMethod
 from ok.device.capture_methods.bitblt_utils import (
     BGRA_CHANNEL_COUNT,
@@ -24,3 +24,4 @@ from ok.device.capture_methods.nemu_ipc import NemuIpcCaptureMethod
 from ok.device.capture_methods.types import ColorChannel, ImageShape, decimal, is_digit, is_valid_hwnd
 from ok.device.capture_methods.update import get_capture, get_win_graphics_capture, update_capture_method
 from ok.device.capture_methods.windows_graphics import WindowsGraphicsCaptureMethod
+from ok.device.capture_methods.windows_graphics_hdr import WindowsGraphicsCaptureHDRMethod

@@ -14,6 +14,7 @@ APP_LAUNCHER_UPDATE_METHOD = 'Auto Update'
 APP_LAUNCHER_ACTION = 'Launcher'
 APP_LAUNCHER_OPEN = 'Open Launcher'
 KILL_LAUNCHER_AFTER_START = 'Kill Launcher After Start'
+ENABLE_MCP_SERVER = 'Enable MCP Server'
 NOTIFICATION_OPTION_NAME = 'Notification'
 SYSTEM_NOTIFICATION_ENABLED = 'System Notification'
 DISCORD_NOTIFICATION_ENABLED = 'Discord Notification'
@@ -31,6 +32,14 @@ QQ_BOT_NOTIFICATION_ENABLED = 'QQ Bot API Notification'
 QQ_BOT_APP_ID = 'QQ Bot API App ID'
 QQ_BOT_TOKEN = 'QQ Bot API Token'
 QQ_BOT_CHANNEL_ID = 'QQ Bot API Channel ID'
+SMTP_NOTIFICATION_ENABLED = 'SMTP Notification'
+SMTP_HOST = 'SMTP Host'
+SMTP_PORT = 'SMTP Port'
+SMTP_USERNAME = 'SMTP Username'
+SMTP_PASSWORD = 'SMTP Password'
+SMTP_USE_TLS = 'SMTP Use TLS'
+SMTP_DEFAULT_SENDER = 'SMTP Default Sender'
+SMTP_DEFAULT_RECIPIENT = 'SMTP Default Recipient'
 
 _LEGACY_NOTIFICATION_KEYS = {
     'QQ Notification': QQ_NOTIFICATION_ENABLED,
@@ -48,6 +57,7 @@ UPDATE_METHOD_LABELS = {
 UPDATE_METHOD_VALUES = {value: label for label, value in UPDATE_METHOD_LABELS.items()}
 
 _basic_options_default = {
+    ENABLE_MCP_SERVER: False,
     'Auto Start Game When App Starts': False,
     'Minimize Window to System Tray when Closing': False,
     'Mute Game while in Background': False,
@@ -60,8 +70,10 @@ _basic_options_default = {
     'Launch with DX11': False
 }
 _basic_options_type = {'Use DirectML': {'type': "drop_down", 'options': ['Auto', 'Yes', 'No']},
+                       ENABLE_MCP_SERVER: {'type': 'mcp_server'},
                        'Start/Stop': {'type': "drop_down", 'options': ['None', 'F9', 'F10', 'F11', 'F12']}}
 _basic_options_description = {'Use DirectML': 'Use GPU to Improve Performance',
+                              ENABLE_MCP_SERVER: 'Allow local coding agents to control this app and run Python code',
                               'Start/Stop': 'HotKey',
                               'Trigger Interval': 'Increase Delay between Trigger Tasks to Reduce CPU/GPU Usage(Milliseconds)'}
 _blur_options_default = {'Enable Blur': False, 'Blur Algorithm': 'Inpaint', 'Blur Interval': 1}
@@ -106,6 +118,14 @@ def create_notification_options():
         QQ_BOT_APP_ID: '',
         QQ_BOT_TOKEN: '',
         QQ_BOT_CHANNEL_ID: '',
+        SMTP_NOTIFICATION_ENABLED: False,
+        SMTP_HOST: '',
+        SMTP_PORT: 587,
+        SMTP_USERNAME: '',
+        SMTP_PASSWORD: '',
+        SMTP_USE_TLS: True,
+        SMTP_DEFAULT_SENDER: '',
+        SMTP_DEFAULT_RECIPIENT: '',
         # Desktop automation is intentionally last and marked unreliable.
         QQ_NOTIFICATION_ENABLED: False,
         QQ_NICKNAME: '',
@@ -129,6 +149,14 @@ def create_notification_options():
         QQ_BOT_APP_ID: {'type': 'line_edit'},
         QQ_BOT_TOKEN: {'type': 'line_edit'},
         QQ_BOT_CHANNEL_ID: {'type': 'line_edit'},
+        SMTP_NOTIFICATION_ENABLED: {
+            'sub_configs': {True: [SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD,
+                                   SMTP_USE_TLS, SMTP_DEFAULT_SENDER, SMTP_DEFAULT_RECIPIENT]}},
+        SMTP_HOST: {'type': 'line_edit', 'minimum_width': 480, 'maximum_width': 640},
+        SMTP_USERNAME: {'type': 'line_edit'},
+        SMTP_PASSWORD: {'type': 'line_edit'},
+        SMTP_DEFAULT_SENDER: {'type': 'line_edit'},
+        SMTP_DEFAULT_RECIPIENT: {'type': 'line_edit'},
     }
     descriptions = {
         SYSTEM_NOTIFICATION_ENABLED: 'Show notifications using the Windows system tray',
@@ -149,6 +177,14 @@ def create_notification_options():
         QQ_BOT_APP_ID: 'QQ Bot application ID',
         QQ_BOT_TOKEN: 'QQ Bot application token',
         QQ_BOT_CHANNEL_ID: 'QQ channel ID to receive notifications',
+        SMTP_NOTIFICATION_ENABLED: 'Send notifications through an SMTP email server',
+        SMTP_HOST: 'SMTP server address (e.g. smtp.qq.com)',
+        SMTP_PORT: 'SMTP server port (587 or 465)',
+        SMTP_USERNAME: 'Username for SMTP authentication (your own email address)',
+        SMTP_PASSWORD: 'Get an authorization code from your email settings',
+        SMTP_USE_TLS: 'Enable TLS encryption (STARTTLS for 587, SMTPS for 465)',
+        SMTP_DEFAULT_SENDER: 'Sender email address',
+        SMTP_DEFAULT_RECIPIENT: 'Recipient email address(es), comma-separated',
     }
     return ConfigOption(
         NOTIFICATION_OPTION_NAME,
@@ -236,6 +272,16 @@ class GlobalConfig:
 def register_basic_options(global_config, enable_blur=False):
     options = create_basic_options(enable_blur=enable_blur)
     config = global_config.get_config(options)
+    # Applications may provide their own Basic Options; always add the MCP opt-in.
+    config.default[ENABLE_MCP_SERVER] = False
+    if ENABLE_MCP_SERVER not in config:
+        config[ENABLE_MCP_SERVER] = False
+    registered = global_config.config_options[options.name]
+    registered.default_config[ENABLE_MCP_SERVER] = False
+    if registered.config_type is None:
+        registered.config_type = {}
+    registered.config_type[ENABLE_MCP_SERVER] = options.config_type[ENABLE_MCP_SERVER]
+    registered.config_description.setdefault(ENABLE_MCP_SERVER, options.config_description[ENABLE_MCP_SERVER])
     if enable_blur:
         for key, value in _blur_options_default.items():
             if key not in config:
