@@ -3,9 +3,9 @@ from dataclasses import dataclass
 from time import monotonic
 
 from ok.task.exceptions import FinishedException, TaskDisabledException
-from qfluentwidgets import FluentIcon
 
 from src.diagnostics.runtime import capture_failure_frame
+from src.icons import TaskIcon as FluentIcon
 from src.tasks.BaseBD2Task import BaseBD2Task
 from src.tasks.map_trade.models import TemplateSpec
 from src.tasks.task_vision_mixin import (

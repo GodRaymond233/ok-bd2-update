@@ -8,24 +8,17 @@ from ok import Box
 from ok.util.GlobalConfig import create_basic_options
 
 from src import GAME_EXE, HWND_CLASS
-from src.compat.about_tab_layout import install_about_tab_layout
 from src.compat.executor_cleanup import enable_executor_cleanup
-from src.compat.launcher_update_notice import install_launcher_update_notice
-from src.compat.main_window_geometry import install_main_window_geometry_debounce
 from src.compat.starter_guard import enable_starter_launch_guard
 from src.compat.starter_launch import enable_starter_launch_uri
-from src.compat.update_card_ui import install_update_card_ui
 from src.compat.windows_graphics import WGC_MIN_CAPTURE_SIZE, enable_windows_10_wgc
 from src.game_path import calculate_pc_exe_path
 from src.interaction.BD2Interaction import BD2Interaction
 from src.process_feature import process_feature
-from src.ui.quest_theme import apply_app_font
-from src.ui.quest_ui import install_quest_ui
-from src.ui.responsive_task_config import install_responsive_task_config_ui
 
 # This marker is replaced with the Git tag when PyAppify creates the update
 # repository.  Source checkouts always read the project version from pyproject.
-version = "v1.4.13"
+version = "v2.0.0"
 
 
 def runtime_version(project_file: Path | None = None) -> str:
@@ -38,17 +31,10 @@ def runtime_version(project_file: Path | None = None) -> str:
         raise RuntimeError("Missing pyproject.toml and PyAppify release tag.")
     return version
 
-apply_app_font()
 enable_executor_cleanup()
 enable_windows_10_wgc()
 enable_starter_launch_uri()
 enable_starter_launch_guard()
-install_main_window_geometry_debounce()
-install_launcher_update_notice()
-install_responsive_task_config_ui()
-install_quest_ui()
-install_update_card_ui()
-install_about_tab_layout()
 
 DX11_OPTION = "Launch with DX11"
 
@@ -74,7 +60,7 @@ def blur_area(width, height):
 config = {
     "custom_tasks": True,
     "debug": False,
-    "use_gui": True,
+    "use_gui": False,
     "config_folder": "configs",
     "global_configs": [basic_options],
     "blur_area": blur_area,
@@ -182,10 +168,6 @@ config = {
     ],
     "trigger_tasks": [
         ["src.tasks.trigger.AutoLoginTask", "AutoLoginTask"],
-    ],
-    "custom_tabs": [
-        ["src.ui.BD2StatusTab", "BD2StatusTab"],
-        ["src.ui.AutoLoginStatusTab", "AutoLoginStatusTab"],
     ],
     "scene": ["src.scene.BD2Scene", "BD2Scene"],
     "update_pyappify": {

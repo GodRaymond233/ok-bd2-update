@@ -8,9 +8,9 @@ from dataclasses import dataclass
 
 from ok import BaseTask
 from ok.task.exceptions import FinishedException, TaskDisabledException
-from qfluentwidgets import FluentIcon
 
 from src.diagnostics.runtime import observe_run, task_error
+from src.icons import TaskIcon as FluentIcon
 from src.tasks.BaseBD2Task import task_info_snapshot
 from src.tasks.DailyTask import DailyTask
 from src.tasks.FreeGachaTask import FreeGachaTask
@@ -108,6 +108,7 @@ class DailyBatchTask(BaseTask):
         self.visible = True
         self._requested_run_mode = RUN_MODE_ALL
         self._start_after_login = False
+        self._skip_reasons: dict[str, dict] = {}
 
         child_keys = [child.config_key for child in self.child_tasks]
         self.default_config.update(
@@ -150,6 +151,19 @@ class DailyBatchTask(BaseTask):
                 }
             }
         )
+
+    def skip_reasons(self) -> dict[str, dict]:
+        """Why each child of the current or last run was skipped, by config key.
+
+        ``reason`` is ``off`` (not taking part), ``stopped`` (an earlier child failed and
+        could not return home), ``done`` (completed this cycle), ``settlement`` (the weekly
+        PVP closure) or ``not_due`` (failure back-off; ``minutes`` until it may run). Kept in
+        memory until the next run.
+        """
+        # dict() copies in one step, so the executor thread adding a reason mid-copy
+        # cannot break the API thread's iteration.
+        reasons = dict(getattr(self, "_skip_reasons", {}))
+        return {key: dict(value) for key, value in reasons.items()}
 
     def request_run_mode(self, run_mode: str) -> None:
         """Select the next executor-driven run without persisting UI config.
@@ -217,12 +231,16 @@ class DailyBatchTask(BaseTask):
     def release_after_login(cls, executor) -> bool:
         """自动登录落定后放行被门控挂起的批次；返回是否有批次被放行。"""
         batch = executor.get_task_by_class(cls)
-        if batch is None or not getattr(batch, "_start_after_login", False):
+        if batch is None:
             return False
-        batch._start_after_login = False
-        batch._enabled = True
-        if not executor.enqueue_onetime_task(batch):
-            return False
+        # 与停止请求共用任务锁：停止后不得再被登录完成事件重新放行。
+        with batch.lock:
+            if not getattr(batch, "_start_after_login", False):
+                return False
+            batch._enabled = True
+            batch._start_after_login = False
+            if not executor.enqueue_onetime_task(batch):
+                return False
         batch.log_info("一键完成日常：自动登录已完成，开始执行。")
         return True
 
@@ -234,7 +252,11 @@ class DailyBatchTask(BaseTask):
     def run(self, run_mode: str | None = None):
         if self._auto_login_pending():
             # 门控期间不消费注入的 run_mode，放行后的正式运行再取。
-            self._start_after_login = True
+            with self.lock:
+                if getattr(self.executor, "current_task", None) is self:
+                    # 已被停止时直接抛出，不再登记登录后放行。
+                    self.executor.check_enabled(check_pause=False)
+                self._start_after_login = True
             self.info_set("状态", "等待自动登录完成，完成后自动开始。")
             self.log_info("一键完成日常：自动登录未完成，待登录完成后自动开始。")
             return True
@@ -244,6 +266,7 @@ class DailyBatchTask(BaseTask):
             return True
 
         only_incomplete = run_mode == RUN_MODE_INCOMPLETE
+        self._skip_reasons = {}
         from src.tasks import scheduler as task_scheduler
         from src.tasks.run_history import configuration_scope, default_store
 
@@ -274,8 +297,12 @@ class DailyBatchTask(BaseTask):
         )
 
         for child in self.child_tasks:
-            if not bool(self.config.get(child.config_key, True)) or stop_remaining:
+            taking_part = bool(self.config.get(child.config_key, True))
+            if not taking_part or stop_remaining:
                 skipped.append(child.config_key)
+                self._skip_reasons[child.config_key] = {
+                    "reason": "off" if not taking_part else "stopped", "minutes": None,
+                }
                 publish_outcome()
                 continue
 
@@ -289,6 +316,7 @@ class DailyBatchTask(BaseTask):
 
             if child.task_class is PVPTask and task._skip_weekly_settlement():
                 skipped.append(child.config_key)
+                self._skip_reasons[child.config_key] = {"reason": "settlement", "minutes": None}
                 publish_outcome()
                 self.log_info(f"一键完成日常：{child.config_key} 赛季结算，本次跳过。")
                 continue
@@ -298,6 +326,7 @@ class DailyBatchTask(BaseTask):
             ):
                 skipped.append(child.config_key)
                 pre_completed.append(child.config_key)
+                self._skip_reasons[child.config_key] = {"reason": "done", "minutes": None}
                 publish_outcome()
                 self.log_info(f"一键完成日常：{child.config_key} 今日已完成，跳过。")
                 continue
@@ -307,6 +336,9 @@ class DailyBatchTask(BaseTask):
             ):
                 remaining = schedule_store.backoff_remaining_minutes(str(task.name))
                 skipped.append(child.config_key)
+                self._skip_reasons[child.config_key] = {
+                    "reason": "not_due", "minutes": round(remaining),
+                }
                 publish_outcome()
                 self.log_info(
                     f"一键完成日常：{child.config_key} 调度未到期"
@@ -349,6 +381,9 @@ class DailyBatchTask(BaseTask):
                     if task_info_snapshot(task).get("PVP 结算休战"):
                         child_result = None
                         skipped.append(child.config_key)
+                        self._skip_reasons[child.config_key] = {
+                            "reason": "settlement", "minutes": None,
+                        }
                         publish_outcome()
                         self.log_info(f"一键完成日常：{child.config_key} 赛季结算，本次跳过。")
                     elif child_result:

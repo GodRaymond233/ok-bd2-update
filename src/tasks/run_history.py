@@ -10,6 +10,11 @@ Batch tasks (一键完成日常) record their children immediately after each ru
 using each child's actual timestamps.  Finishing the batch only records the
 batch itself, so a run crossing the daily refresh cannot move earlier child
 completions into the new game day.
+
+The same file also keeps the most recent runs of all tasks (``recent``) for the
+desktop client's run lists.  The key is optional and outside the versioned
+``tasks``/``stages`` data: versions that predate it load the file unchanged and
+drop the list the next time they save.
 """
 
 from __future__ import annotations
@@ -39,6 +44,7 @@ DAILY_REFRESH_HOUR = 4
 STORE_VERSION = 1
 RETIRED_STAGE_LIMIT = 64
 DEFAULT_FILE = ("configs", "task_run_history.json")
+RECENT_LIMIT = 300
 
 # Status texts containing any of these markers never count as a completion.
 # Match explicit failure/safety wording instead of the bare ``停止`` token:
@@ -115,6 +121,31 @@ def is_successful_run(info: dict) -> bool:
     return _is_successful_run(info)
 
 
+def run_state(task, info=None) -> str:
+    """The result state of a task's current or last run: run, pause, done, warn, abort or fail.
+
+    Shared by the Qt run panel and the desktop client. Pass the caller's info snapshot
+    when it already has one.
+    """
+    if info is None:
+        info = task_info_snapshot(task)
+    if getattr(task, "enabled", False):
+        return "pause" if getattr(task, "paused", False) else "run"
+    current_run = (id(task), getattr(task, "start_time", 0))
+    if getattr(task, "_bd2_stopped_run", None) == current_run:
+        return "abort"
+    status = str(info.get("状态", ""))
+    if "中止" in status:
+        return "abort"
+    if "存在问题" in status and not info.get("Error"):
+        return "warn"
+    if not info:
+        return "done"
+    if not is_successful_run(info):
+        return "fail"
+    return "done"
+
+
 def contains_joined_name(joined: Any, name: str) -> bool:
     """Boundary-aware membership test for '、'-joined info lists.
 
@@ -144,6 +175,7 @@ class RunHistoryStore:
         self._lock = threading.RLock()
         self._records: dict[str, dict] = {}
         self._stages: dict[str, dict] = {}
+        self._recent: list[dict] = []
         self._retired_stages: list[dict] = []
         self._stage_error = False
         self._load()
@@ -169,6 +201,14 @@ class RunHistoryStore:
         stages = data.get("stages", {})
         self._stage_error = not isinstance(stages, dict)
         self._stages = stages if isinstance(stages, dict) else {}
+        recent = data.get("recent")
+        self._recent = [
+            run
+            for run in (recent if isinstance(recent, list) else [])
+            if isinstance(run, dict)
+            and isinstance(run.get("task"), str)
+            and isinstance(run.get("finished"), (int, float))
+        ][-RECENT_LIMIT:]
         retired = data.get("retired_stages", [])
         if not isinstance(retired, list):
             self._stage_error = True
@@ -187,8 +227,13 @@ class RunHistoryStore:
             os.close(descriptor)
             if write_json_file(
                 temporary,
-                {"version": STORE_VERSION, "tasks": self._records, "stages": self._stages,
-                 "retired_stages": self._retired_stages},
+                {
+                    "version": STORE_VERSION,
+                    "tasks": self._records,
+                    "stages": self._stages,
+                    "recent": self._recent,
+                    "retired_stages": self._retired_stages,
+                },
             ) is False:
                 raise OSError("运行记录写入失败")
             with open(temporary, "rb+") as stream:
@@ -263,6 +308,16 @@ class RunHistoryStore:
     def last_run(self, task_name: str) -> dict | None:
         with self._lock:
             return self._records.get(task_name)
+
+    def recent_runs(self, task_name: str | None = None, limit: int = 20) -> list[dict]:
+        """Finished runs, newest first, of one task or of all tasks."""
+        with self._lock:
+            runs = [
+                copy.deepcopy(run)
+                for run in reversed(self._recent)
+                if task_name is None or run["task"] == task_name
+            ]
+        return runs[: max(0, limit)]
 
     def is_completed_today(self, task_name: str, now: float | None = None,
                            *, scope: str | None = None) -> bool:
@@ -339,6 +394,20 @@ class RunHistoryStore:
                 "daily_cycle": (info.get("日常周期") if successful
                                 else previous.get("daily_cycle")),
             }
+            self._recent.append(
+                {
+                    "task": str(task.name),
+                    "started": started or None,
+                    "finished": finished,
+                    "duration": duration,
+                    "ok": successful,
+                    "status": status,
+                    "details": {key: str(info[key])[:4000]
+                                for key in ("Error", "结果", "失败", "当前阶段")
+                                if info.get(key) not in (None, "", "-")},
+                }
+            )
+            del self._recent[:-RECENT_LIMIT]
             if task.name == "每周跑图":
                 self._records[str(task.name)]["collection_period"] = (
                     {"今日": "daily", "本周": "weekly"}.get(info.get("跑图完成范围"))
@@ -394,16 +463,19 @@ def set_default_store(store: RunHistoryStore | None) -> None:
         _default_store = store
 
 
-def install_run_history_recorder() -> bool:
+def install_run_history_recorder(exit_event=None) -> bool:
     """Record every finished one-time task into the default store."""
 
     from ok.core.events import communicate
-    from PySide6.QtCore import QObject
 
     if getattr(install_run_history_recorder, "_installed", False):
         return False
 
-    class _Recorder(QObject):
+    class _Recorder:
+        def stop(self):
+            communicate.task_done.disconnect(self.on_task_done)
+            install_run_history_recorder._installed = False
+
         def on_task_done(self, task):
             if task is None or not getattr(task, "name", None):
                 return
@@ -432,6 +504,8 @@ def install_run_history_recorder() -> bool:
 
     recorder = _Recorder()
     communicate.task_done.connect(recorder.on_task_done)
+    if exit_event is not None:
+        exit_event.bind_stop(recorder)
     # Keep the receiver alive for the app's lifetime.
     install_run_history_recorder._recorder = recorder
     install_run_history_recorder._installed = True

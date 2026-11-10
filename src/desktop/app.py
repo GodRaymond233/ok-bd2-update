@@ -1,0 +1,868 @@
+"""Adapt ok-script's Web API to BD2's persistence and task semantics for the desktop shell.
+
+Ported from ``codex/webui-refactor`` (``src/webui/app.py`` at ``b8f623d``) without the
+pywebview window, the ok-script page injection and the quick-hunt plan editor (main has
+no ``quick_hunt_plan`` yet).  The React client is served from ``src/desktop/ui_dist``.
+"""
+
+import os
+import threading
+from pathlib import Path
+
+from fastapi import HTTPException
+from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.staticfiles import StaticFiles
+from ok import og
+from ok.core.config_schema import build_config_fields
+from ok.core.events import communicate
+
+from src.compat.startup import scheduled_start_failures
+from src.compat.update_card_ui import launcher_supports_update_check
+from src.desktop.config_store import config_lock, save_config, task_config_busy
+from src.desktop.events import install_events
+from src.desktop.guides import guide_id, install_guides
+from src.desktop.hunt_plans import install_hunt_plans
+from src.desktop.language import install_language
+from src.desktop.maintenance import install_maintenance
+from src.desktop.okweb import app as framework
+from src.desktop.preview import LivePreview
+from src.desktop.protocol import API_VERSION
+from src.desktop.reports import ReportSession
+from src.desktop.scripts import install_scripts
+from src.desktop.security import LocalSession
+from src.desktop.settings_text import (
+    FIELD_TEXT,
+    OPTIONAL_TEST_KEYS,
+    TEST_CHANNELS,
+    describe_group,
+)
+from src.desktop.starter_wait import STARTER_WAIT
+from src.desktop.tools import executor_busy, install_tools
+from src.game_path import resolve_game_exe_path, resolve_launcher_exe_path
+from src.task_guides import GUIDES
+from src.tasks.BaseBD2Task import task_info_snapshot
+from src.tasks.DailyBatchTask import RUN_MODE_ALL, RUN_MODE_INCOMPLETE, DailyBatchTask
+from src.tasks.quick_hunt_plan import PLAN_KEY, describe_plan, load_book
+from src.tasks.run_history import RECENT_LIMIT, default_store, run_state
+from src.tasks.today import find_batch, today_summary
+from src.ui.hide_config_rows import mark_hidden_config_keys
+from src.window_resolution import (
+    DEFAULT_MANUAL_RESOLUTION,
+    MANUAL_RESOLUTIONS,
+    ensure_resolution_change_safe,
+    resize_game_window,
+)
+
+UI_DIST = Path(__file__).with_name("ui_dist")
+# MiSans ships with the app for the Qt window too (src/ui/quest_theme.py).
+FONTS = Path(__file__).resolve().parents[2] / "assets" / "fonts"
+HISTORY_LIMIT = RECENT_LIMIT
+# Structured settings use the same stored format as their Qt editors.
+DEDICATED_EDITORS = {PLAN_KEY: "hunt_plan"}
+# select_capture("auto") stores ok-script's default, which tries capture_method in order.
+AUTO_CAPTURE = "auto"
+AUTO_CAPTURE_CONFIG = "windows"
+TEST_TITLE = "ok-bd2 测试消息"
+TEST_MESSAGE = "这是一条测试消息。收到它说明通知设置正确。"
+# ok-script's own info keys, which tasks report in English.
+STATUS_LABELS = {"Log": "最近日志", "Warning": "警告", "Error": "错误"}
+
+
+class LegacyInstanceRunning(RuntimeError):
+    """An older ok-bd2 that ignores the executor lock is running."""
+
+
+MISSING_UI_PAGE = """<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>ok-bd2</title></head>
+<body><h1>界面文件缺失</h1>
+<p>ok-bd2 已启动，但没有找到界面文件。请重新安装当前版本。</p>
+</body></html>"""
+
+DEVICE_KINDS = {"windows": "PC", "adb": "安卓", "browser": "浏览器"}
+
+# ok-script's capture classes by the identifiers that the windows config and
+# select_capture use. BitBltCaptureMethod serves both BitBlt and BitBlt_RenderFull;
+# ok-script keeps that choice in bitblt.render_full.
+CAPTURE_IDS = {
+    "WindowsGraphicsCaptureMethod": "WGC",
+    "ForegroundBitBltCaptureMethod": "ForegroundBitBlt",
+    "DesktopDuplicationCaptureMethod": "DXGI",
+    "BrowserCaptureMethod": "browser",
+    "ADBCaptureMethod": "adb",
+    "NemuIpcCaptureMethod": "ipc",
+}
+
+
+def device_payload(device, preferred_id):
+    """ok-script's device entry with a Chinese label (ok-script labels it in English)."""
+    payload = framework._device_payload(device, preferred_id)
+    kind = DEVICE_KINDS.get(payload["kind"], payload["kind"] or "设备")
+    state = "已连接" if payload["connected"] else "未连接"
+    details = " ".join(
+        str(value)
+        for value in (device.get("nick"), device.get("address"), device.get("resolution"))
+        if value
+    )
+    payload["label"] = f"{kind} {state}：{details}" if details else f"{kind} {state}"
+    return payload
+
+
+def capture_in_use(manager):
+    """Identifier of the capture method running for the connected window, if any.
+
+    The config may hold ``windows`` (pick automatically, in the configured order) instead
+    of a method, and a preferred method that fails falls back to the next one, so the
+    config value does not say which method runs.
+    """
+    method = getattr(manager, "capture_method", None)
+    preferred = manager.get_preferred_device()
+    if method is None or not (preferred and preferred.get("connected")):
+        return None
+    for cls in type(method).__mro__:
+        if cls.__name__ == "BitBltCaptureMethod":
+            from ok.device.capture_methods import bitblt
+
+            return "BitBlt_RenderFull" if bitblt.render_full else "BitBlt"
+        if cls.__name__ in CAPTURE_IDS:
+            return CAPTURE_IDS[cls.__name__]
+    return type(method).__name__
+
+
+def task_payload(task):
+    with config_lock:
+        waiting = (
+            task.executor.waiting_for_task(task) if task in task.executor.onetime_tasks else None
+        )
+        info = task_info_snapshot(task)
+        fields = build_config_fields(
+            task.config,
+            task.config_description,
+            task.config_type,
+            task.default_config,
+            serialize=framework._json_value,
+        )
+        for field in fields:
+            if field["key"] in DEDICATED_EDITORS:
+                field["editor"] = DEDICATED_EDITORS[field["key"]]
+                field["editor_title"], field["editor_summary"] = plan_summary(task.config)
+        return {
+            "name": task.name,
+            "class_name": type(task).__name__,
+            "enabled": bool(task.enabled),
+            "running": bool(task.running),
+            "paused": bool(task.paused),
+            "trigger": task in task.executor.trigger_tasks,
+            "description": str(task.description or ""),
+            "visible": bool(task.visible),
+            "group_name": task.group_name,
+            "instructions": getattr(task, "instructions", None),
+            "guide": GUIDES.get(type(task).__name__, (None, None, None))[2],
+            "guide_id": guide_id(task),
+            "waiting_for": waiting.name if waiting else None,
+            "start_time": float(task.start_time or 0),
+            "info": framework._json_value(info),
+            "status_rows": status_rows(task, info),
+            "run_state": run_state(task, info),
+            "config_busy": task_config_busy(task),
+            "config": fields,
+            "hidden_config_count": hidden_config_count(task),
+        }
+
+
+def plan_summary(config):
+    """The active rice plan's name and rules, as the Qt task card shows them."""
+    try:
+        book = load_book(config)
+        plan = book["plans"][book["active"]]
+        return plan["name"], describe_plan(plan)
+    except ValueError as error:
+        return "需要修正", str(error)
+
+
+def status_rows(task, info):
+    """The values a task reported in its current or last run, under the names it gives them.
+
+    In the order of the Qt window's 任务状态确认 (src/ui/AutoLoginStatusTab.py): the declared
+    ``status_keys``, then anything else in ``info``. That page also fills declared keys from
+    the settings for diagnosis; here a setting is not a result, and hidden ones stay hidden.
+    """
+    labels = getattr(task, "status_key_labels", None) or {}
+    config_type = getattr(task, "config_type", None) or {}
+    rows = []
+    for key in dict.fromkeys([*(getattr(task, "status_keys", None) or ()), *info]):
+        spec = config_type.get(key)
+        hidden = isinstance(spec, dict) and spec.get("hidden")
+        text = status_text(info.get(key))
+        # 启用 is the task's own switch, which the form above shows.
+        if text and not hidden and key != "启用":
+            label = labels.get(key, STATUS_LABELS.get(key, key))
+            rows.append({"key": str(key), "label": str(label), "value": text})
+    return rows
+
+
+def status_text(value):
+    if value is True:
+        return "是"
+    if value is False:
+        return "否"
+    if value is None:
+        return ""
+    text = "、".join(map(str, value)) if isinstance(value, (list, tuple)) else str(value)
+    return "" if text == "-" else text
+
+
+def hidden_config_count(task):
+    """How many maintenance settings the form leaves out (see hide_config_rows)."""
+    config_type = getattr(task, "config_type", None) or {}
+    return sum(
+        1
+        for key in task.config
+        if not str(key).startswith("_")
+        and isinstance(config_type.get(key), dict)
+        and config_type[key].get("hidden")
+    )
+
+
+def adapt_runtime(runtime, legacy_check=None, starter_wait=None):
+    """Wrap ok-script's runtime operations with BD2's start, stop and save rules.
+
+    ``legacy_check`` returns a refusal message while an older ok-bd2 runs (see
+    ``src.executor_guard``); start and resume requests are refused synchronously so the
+    client sees the reason instead of a silent no-op.  ``starter_wait`` (a
+    ``src.desktop.starter_wait.StarterWait``) reports the Starter wait in ``capture_ui``.
+    """
+    for task in runtime.executor.get_all_tasks():
+        mark_hidden_config_keys(task)
+    original_setting = runtime.set_setting
+    original_reset_settings = runtime.reset_settings
+    original_about = runtime.about
+    original_settings = runtime.settings
+    controller = runtime.ok.headless_app.start_controller
+    original_start = controller.start
+
+    def refuse_legacy():
+        message = legacy_check() if legacy_check is not None else None
+        if message:
+            raise LegacyInstanceRunning(message)
+
+    def start_controller(task=None, exit_after=False):
+        with config_lock:
+            if getattr(runtime.ok.headless_app, "maintenance", False):
+                return False
+            if getattr(runtime.ok.headless_app, "diagnostic_pause", False):
+                return False
+            if getattr(runtime.ok.headless_app, "window_resize_in_progress", False):
+                return False
+            if controller.starting:
+                return False
+            return original_start(task, exit_after=exit_after)
+
+    controller.start = start_controller
+    runtime.prevent_report_resume = lambda: None
+
+    def pause():
+        with config_lock:
+            runtime.prevent_report_resume()
+            runtime.executor.pause()
+            return runtime.status()
+
+    def stop_task():
+        with config_lock:
+            if task := runtime.executor.current_task:
+                stop(task)
+            return runtime.status()
+
+    def stop(task):
+        runtime.prevent_report_resume()
+        task._bd2_stopped_run = (id(task), getattr(task, "start_time", 0))
+        if isinstance(task, DailyBatchTask):
+            with task.lock:
+                task._start_after_login = False
+                task._enabled = False
+        task.disable()
+        if task.paused:
+            # disable wakes sleep/check_enabled even while the executor is paused.
+            # unpause would also start the executor and undo a global pause.
+            task._paused = False
+            communicate.task.emit(task)
+
+    def resume():
+        with config_lock:
+            ensure_config_write()
+            refuse_legacy()
+            if controller.start() is False:
+                raise RuntimeError("正在启动游戏，请等待或取消启动")
+            return runtime.status()
+
+    def toggle_execution():
+        with config_lock:
+            if controller.starting:
+                raise ValueError("正在启动游戏，请等待或取消启动")
+            current = runtime.executor.current_task
+            if current is not None and current.paused:
+                task_action(current.name, "resume")
+            elif runtime.executor.paused or not runtime.status()["running"]:
+                resume()
+            elif current in runtime.executor.onetime_tasks and current.enabled:
+                # The run panel's own pause: the panel shows it and offers 继续.
+                task_action(current.name, "pause")
+            else:
+                pause()
+            return runtime.status()
+
+    def ensure_config_write(*, allow_tools=False):
+        if getattr(runtime.ok.headless_app, "maintenance", False):
+            raise RuntimeError("正在准备更新或恢复备份，请稍候")
+        if getattr(runtime.ok.headless_app, "diagnostic_pause", False):
+            raise RuntimeError("请先完成或取消问题报告，再修改配置或启动任务")
+        if getattr(runtime.ok.headless_app, "window_resize_in_progress", False):
+            raise RuntimeError("正在调整游戏窗口，请等待调整完成")
+        if not allow_tools and executor_busy(runtime.executor):
+            raise RuntimeError("调试操作正在进行，请等待或停止后再试")
+
+    def about():
+        result = original_about()
+        launcher = runtime.pyappify_module
+        result["update_supported"] = bool(
+            result["update_supported"]
+            and getattr(launcher, "pyappify_executable", None)
+            and getattr(launcher, "pyappify_version", None)
+            and launcher_supports_update_check(launcher.pyappify_version) is not False
+        )
+        return result
+
+    def task_config(name, key, value):
+        with config_lock:
+            ensure_config_write()
+            task, _ = runtime.ok.get_task(name)
+            if task_config_busy(task) or controller.starting:
+                raise ValueError("请先停止正在运行或排队的任务，再修改配置")
+            save_config(task.config, {key: value}, specifications=task.config_type)
+            return task_payload(task)
+
+    def reset_task_config(name):
+        with config_lock:
+            ensure_config_write()
+            task, _ = runtime.ok.get_task(name)
+            if task_config_busy(task) or controller.starting:
+                raise ValueError("请先停止任务，再重置配置")
+            save_config(
+                task.config,
+                task.config.default,
+                allow_private=True,
+                specifications=task.config_type,
+            )
+            return task_payload(task)
+
+    def setting(group, key, value):
+        with config_lock:
+            ensure_config_write()
+            config = runtime.executor.global_config.get_config(group)
+            if not hasattr(config, "config_file"):
+                return original_setting(group, key, value)
+            specifications = next(
+                (
+                    option.config_type
+                    for name, _, option in runtime.executor.global_config.get_all_visible_configs()
+                    if name == group
+                ),
+                {},
+            )
+            save_config(config, {key: value}, specifications=specifications)
+            return next(item for item in runtime.settings() if item["name"] == group)
+
+    def reset_settings(group):
+        with config_lock:
+            ensure_config_write()
+            config = runtime.executor.global_config.get_config(group)
+            if not hasattr(config, "config_file"):
+                return original_reset_settings(group)
+            save_config(config, config.default, allow_private=True)
+            return next(item for item in runtime.settings() if item["name"] == group)
+
+    def ensure_task_slot(resuming=None):
+        current = runtime.executor.current_task
+        if current is not None and current is not resuming:
+            raise ValueError("已有任务在运行或排队，请先停止")
+        if any(
+            task is not resuming
+            and (task.enabled or task.running or getattr(task, "_start_after_login", False))
+            for task in runtime.executor.onetime_tasks
+        ):
+            raise ValueError("已有任务在运行或排队，请先停止")
+
+    def start(name):
+        with config_lock:
+            ensure_config_write()
+            task, _ = runtime.ok.get_task(name)
+            if controller.starting:
+                raise ValueError("正在启动游戏，请等待或取消启动")
+            if task.enabled and not task.paused:
+                raise ValueError("任务已在运行或排队")
+            refuse_legacy()
+            ensure_task_slot(resuming=task if task is runtime.executor.current_task else None)
+            if controller.start(task) is False:
+                raise ValueError("任务未启动，请等待启动流程结束")
+            return task_payload(task)
+
+    def task_action(name, operation):
+        with config_lock:
+            task, trigger = runtime.ok.get_task(name)
+            if operation in {"enable", "resume"} and getattr(
+                runtime.ok.headless_app, "diagnostic_pause", False
+            ):
+                raise ValueError("请先完成或取消问题报告，再恢复任务")
+            if operation in {"enable", "resume"} and getattr(
+                runtime.ok.headless_app, "window_resize_in_progress", False
+            ):
+                raise ValueError("请先等待游戏窗口调整完成，再恢复任务")
+            if operation in {"enable", "resume"}:
+                ensure_config_write()
+                refuse_legacy()
+            if operation == "enable" and trigger:
+                task.enable()
+            elif operation == "disable" and trigger:
+                task.disable()
+            elif operation == "pause" and not trigger:
+                if runtime.executor.current_task is not task:
+                    raise ValueError("任务尚未开始，排队中的任务可以停止但不能暂停")
+                runtime.prevent_report_resume()
+                task.pause()
+            elif operation == "resume" and not trigger and task.enabled and task.paused:
+                task.unpause()
+            elif operation == "stop" and not trigger:
+                stop(task)
+            else:
+                raise ValueError("此任务不支持该操作")
+            return task_payload(task)
+
+    def start_daily(mode):
+        """Run 一键完成日常 for the remaining dailies or all of them; never queue it."""
+        if mode not in (RUN_MODE_ALL, RUN_MODE_INCOMPLETE):
+            raise ValueError("未知的运行方式")
+        with config_lock:
+            ensure_config_write()
+            batch = find_batch(runtime.executor)
+            if batch is None:
+                raise ValueError("没有一键完成日常任务")
+            if controller.starting:
+                raise ValueError("正在启动游戏，请等待或取消启动")
+            ensure_task_slot()
+            refuse_legacy()
+            batch.request_run_mode(mode)
+            if controller.start(batch) is False:
+                raise ValueError("任务未启动，请等待启动流程结束")
+            return task_payload(batch)
+
+    def window_info():
+        """The game's client size and the sizes the client may resize it to."""
+        manager = runtime.device_manager
+        preferred = manager.get_preferred_device()
+        window = getattr(manager, "hwnd_window", None)
+        size = None
+        if preferred and preferred.get("connected") and window is not None:
+            width, height = int(window.width or 0), int(window.height or 0)
+            if width and height:
+                size = [width, height]
+        return {
+            "size": size,
+            "ratio_ok": bool(size) and size[0] * 9 == size[1] * 16,
+            "resolutions": [list(item) for item in MANUAL_RESOLUTIONS],
+            "default": list(DEFAULT_MANUAL_RESOLUTION),
+            "resizing": bool(getattr(runtime.ok.headless_app, "window_resize_in_progress", False)),
+        }
+
+    def resize_window(width, height):
+        """Resize the game's client area; refused while a task runs unpaused."""
+        app = runtime.ok.headless_app
+        with config_lock:
+            ensure_config_write()
+            if controller.starting:
+                raise ValueError("正在启动游戏，请等待或取消启动")
+            ensure_resolution_change_safe(runtime.executor)
+            app.window_resize_in_progress = True
+        try:
+            result = resize_game_window(
+                runtime.device_manager, (int(width), int(height)), executor=runtime.executor
+            )
+        finally:
+            app.window_resize_in_progress = False
+        return {"width": result.width, "height": result.height, "changed": result.changed}
+
+    def game_paths():
+        recorded_path = runtime.device_manager.config.get("pc_full_path") or ""
+        return {
+            "game": resolve_game_exe_path(running_path=recorded_path),
+            "launcher": resolve_launcher_exe_path(running_path=recorded_path),
+        }
+
+    def open_launcher():
+        """Show the launcher window, as the Qt settings page's button does."""
+        show = getattr(runtime.pyappify_module, "show_pyappify", None)
+        if not callable(show):
+            raise ValueError("当前运行方式没有启动器")
+        show()
+        return {"opened": True}
+
+    def test_notification(channel):
+        """Send one message through one channel with its saved settings."""
+        if channel == "system":
+            manager = getattr(runtime.ok.headless_app, "notification_manager", None)
+            if manager is None or not manager.notify_system(TEST_TITLE, TEST_MESSAGE, tray=True):
+                raise ValueError("请先开启系统通知")
+            return {"sent": True}
+        if channel not in TEST_CHANNELS:
+            raise ValueError("未知的通知渠道")
+        from ok.notification import providers
+
+        _, keys = TEST_CHANNELS[channel]
+        config = runtime.executor.global_config.get_config("Notification")
+        values = [str(config.get(key) or "").strip() for key in keys]
+        missing = [
+            FIELD_TEXT[key][0]
+            for key, value in zip(keys, values)
+            if not value and key not in OPTIONAL_TEST_KEYS
+        ]
+        if missing:
+            raise ValueError(f"请先填写：{'、'.join(missing)}")
+        if channel == "smtp":
+            # The SMTP provider takes its settings up front, unconverted, and has no address.
+            provider = providers.SmtpProvider(*[config.get(key) for key in keys])
+            if not provider.send(None, TEST_TITLE, TEST_MESSAGE, []):
+                raise RuntimeError("发送失败，原因见日志")
+            return {"sent": True}
+        provider = {
+            "discord": providers.DiscordProvider,
+            "telegram": providers.TelegramBotProvider,
+            "wecom": providers.WeComWebhookProvider,
+            "qqbot": providers.QQBotProvider,
+        }[channel]()
+        # The providers log the failure and return False.
+        if not provider.send(*values, TEST_TITLE, TEST_MESSAGE, []):
+            raise RuntimeError("发送失败，原因见日志")
+        return {"sent": True}
+
+    original_select_capture = runtime.select_capture
+
+    def select_capture(method):
+        if method == AUTO_CAPTURE:
+            runtime.device_manager.set_capture(AUTO_CAPTURE_CONFIG)
+            return runtime.capture_ui()
+        return original_select_capture(method)
+
+    runtime.ensure_config_write = ensure_config_write
+    runtime.ensure_task_slot = ensure_task_slot
+    runtime.select_capture = select_capture
+    runtime.window_info = window_info
+    runtime.resize_window = resize_window
+    runtime.game_paths = game_paths
+    runtime.test_notification = test_notification
+    runtime.open_launcher = open_launcher
+    runtime.settings = lambda: [describe_group(group) for group in original_settings()]
+    runtime.start_daily = start_daily
+    runtime.tasks = lambda: [task_payload(task) for task in runtime.executor.get_all_tasks()]
+    runtime.set_task_config = task_config
+    runtime.reset_task_config = reset_task_config
+    runtime.set_setting = setting
+    runtime.reset_settings = reset_settings
+    runtime.start_task = start
+    runtime.task_action = task_action
+    runtime.about = about
+    runtime.pause = pause
+    runtime.resume = resume
+    runtime.toggle_execution = toggle_execution
+    runtime.stop_task = stop_task
+
+    def device_command(operation):
+        def change(value):
+            with config_lock:
+                ensure_config_write()
+                if controller.starting or runtime.executor.current_task is not None:
+                    raise ValueError("请先停止任务和游戏启动流程，再切换窗口或截图方式")
+                return operation(value)
+
+        return change
+
+    runtime.select_device = device_command(runtime.select_device)
+    runtime.select_capture = device_command(runtime.select_capture)
+    runtime.select_interaction = device_command(runtime.select_interaction)
+
+    original_capture_ui = runtime.capture_ui
+
+    def capture_ui():
+        ui = original_capture_ui()
+        manager = runtime.device_manager
+        preferred = manager.get_preferred_device()
+        preferred_id = preferred.get("imei") if preferred else None
+        ui["devices"] = [device_payload(device, preferred_id) for device in manager.get_devices()]
+        preference = manager.get_preferred_capture()
+        methods = {item["id"] for item in ui["capture_methods"]}
+        # None: no method chosen, the device manager tries capture_methods in order.
+        ui["capture_preference"] = preference if preference in methods else None
+        ui["capture_in_use"] = capture_in_use(manager)
+        ui["starter_wait"] = starter_wait.snapshot() if starter_wait is not None else None
+        ui["diagnostic_pause"] = bool(getattr(runtime.ok.headless_app, "diagnostic_pause", False))
+        ui["maintenance"] = bool(getattr(runtime.ok.headless_app, "maintenance", False))
+        ui["tools_busy"] = executor_busy(runtime.executor)
+        return ui
+
+    # The routes, the select_* operations and the event stream all go through this.
+    runtime.capture_ui = capture_ui
+
+
+def frontend_ready(config, runtime):
+    """Hide the PyAppify window and upgrade the launcher once the client page is up."""
+    launcher = runtime.pyappify_module
+    launcher.hide_pyappify()
+    update = config.get("update_pyappify")
+    if update:
+        launcher.upgrade(
+            update.get("to_version"),
+            update.get("sha256"),
+            [update.get("zip_url")],
+            exit_event=runtime.ok.exit_event,
+        )
+    basic = runtime.executor.global_config.get_config("Basic Options")
+    if basic.get("Kill Launcher After Start", False) and not runtime.ok.exit_event.is_set():
+        launcher.kill_pyappify()
+
+
+def create_app(
+    config,
+    *,
+    token,
+    origin,
+    ok_instance=None,
+    ui_dist=None,
+    legacy_check=None,
+    legacy_instances=None,
+    request_shutdown=None,
+    maintenance_request=None,
+    core_version=None,
+):
+    """Build the loopback API for the desktop shell on top of ok-script's Web runtime."""
+    ui_dist = Path(ui_dist or UI_DIST)
+    app = framework.create_web_app(config, ok_instance=ok_instance)
+    runtime = app.state.runtime
+    STARTER_WAIT.install()
+    adapt_runtime(runtime, legacy_check=legacy_check, starter_wait=STARTER_WAIT)
+    install_hunt_plans(app, runtime)
+    install_guides(app)
+    install_scripts(app, runtime)
+    install_language(app, runtime)
+    install_tools(app, runtime, legacy_check)
+    preview = LivePreview(runtime)
+    evidence = getattr(getattr(og, "my_app", None), "diagnostic_evidence", None)
+    reports = ReportSession(runtime, preview, core_version or str(config.get("version") or ""),
+                            legacy_check=legacy_check, evidence=evidence)
+    if evidence is not None:
+        runtime.ok.exit_event.bind_stop(reports)
+    app.state.reports = reports
+    runtime.prevent_report_resume = reports.prevent_resume
+    install_maintenance(
+        app, runtime, core_version or str(config.get("version") or ""), maintenance_request
+    )
+    install_events(app, runtime)
+    app.add_middleware(LocalSession, token=token, origin=origin)
+    frontend_once = threading.Event()
+    shown_version = Path(config.get("config_folder", "configs")) / ".desktop-version-shown"
+    current_version = core_version or str(config.get("version") or "")
+    previous_version = os.environ.get("PYAPPIFY_APP_STARTING_VERSION", "")
+
+    def version_change():
+        if (not previous_version or
+                previous_version.removeprefix("v") == current_version.removeprefix("v")):
+            return None
+        if shown_version.is_file() and shown_version.read_text("utf-8") == current_version:
+            return None
+        return {"previous": previous_version, "current": current_version,
+                "notes": os.environ.get("PYAPPIFY_UPDATE_NOTE", "")}
+
+    @app.post("/api/desktop/version-shown")
+    def version_shown():
+        from src.desktop.config_store import config_lock
+
+        with config_lock:
+            runtime.ensure_config_write()
+            shown_version.parent.mkdir(parents=True, exist_ok=True)
+            temporary = shown_version.with_suffix(".tmp")
+            temporary.write_text(current_version, "utf-8")
+            temporary.replace(shown_version)
+        return {"accepted": True}
+
+    @app.get("/api/desktop/preferences")
+    def desktop_preferences():
+        # No config_lock: a report holds it for seconds, and a save updates the values last.
+        basic = runtime.executor.global_config.get_config("Basic Options")
+        return {
+            "closeToTray": bool(basic.get("Minimize Window to System Tray when Closing")),
+            "hotkey": basic.get("Start/Stop", "None"),
+        }
+
+    @app.post("/api/desktop/toggle-execution")
+    def toggle_execution():
+        try:
+            return runtime.toggle_execution()
+        except (ValueError, RuntimeError) as error:
+            raise HTTPException(400, str(error)) from error
+
+    # ok-script registers its own page at "/" and a ready hook at "/api/ui/ready".
+    app.router.routes = [
+        route
+        for route in app.router.routes
+        if getattr(route, "path", None) not in {"/", "/api/ui/ready"}
+    ]
+
+    @app.get("/")
+    def index():
+        page = ui_dist / "index.html"
+        if page.is_file():
+            return FileResponse(page, media_type="text/html")
+        return HTMLResponse(MISSING_UI_PAGE)
+
+    if (ui_dist / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=ui_dist / "assets"), name="desktop-assets")
+    if FONTS.is_dir():
+        app.mount("/fonts", StaticFiles(directory=FONTS), name="desktop-fonts")
+
+    @app.post("/api/ui/ready")
+    def ui_ready():
+        if frontend_once.is_set():
+            return {"accepted": False}
+        frontend_once.set()
+
+        def run():
+            try:
+                frontend_ready(config, runtime)
+            except Exception as error:
+                from ok import Logger
+
+                Logger.get_logger(__name__).error(f"启动器就绪处理失败：{error}")
+
+        threading.Thread(target=run, daemon=True, name="FrontendReady").start()
+        return {"accepted": True}
+
+    @app.get("/api/desktop/info")
+    def desktop_info():
+        instances = legacy_instances() if legacy_instances is not None else []
+        launcher_version = getattr(runtime.pyappify_module, "pyappify_version", None)
+        return {
+            "launcher": {
+                "version": launcher_version,
+                # None when the version is unknown (a source checkout) or not a version.
+                "outdated": (
+                    None
+                    if launcher_supports_update_check(launcher_version) is None
+                    else not launcher_supports_update_check(launcher_version)
+                ),
+            },
+            "api": API_VERSION,
+            "core_version": core_version or str(config.get("version") or ""),
+            "version_change": version_change(),
+            "pid": os.getpid(),
+            "mode": "service",
+            "ui_built": (ui_dist / "index.html").is_file(),
+            "custom_scripts": bool(getattr(runtime.task_manager, "has_custom", False)),
+            "legacy_instances": [
+                {"pid": item.pid, "location": item.location, "description": item.describe()}
+                for item in instances
+            ],
+        }
+
+    @app.get("/api/bd2/today")
+    def today():
+        return today_summary(runtime.executor)
+
+    @app.post("/api/bd2/daily/start")
+    def start_daily(body: dict):
+        try:
+            return runtime.start_daily(str(body.get("mode", "")))
+        except (ValueError, RuntimeError) as error:
+            raise HTTPException(400, str(error)) from error
+
+    @app.get("/api/bd2/history")
+    def history(task: str | None = None, limit: int = 20):
+        limit = min(max(limit, 1), HISTORY_LIMIT)
+        runs = default_store().recent_runs(task or None, limit)
+        runs.extend(run for run in scheduled_start_failures() if not task or run["task"] == task)
+        return sorted(runs, key=lambda run: run["finished"], reverse=True)[:limit]
+
+    def report_call(action, *args):
+        try:
+            return action(*args)
+        except (ValueError, RuntimeError, OSError) as error:
+            raise HTTPException(400, str(error)) from error
+
+    @app.get("/api/bd2/preview")
+    def live_preview():
+        return Response(report_call(preview.image), media_type="image/jpeg")
+
+    @app.get("/api/bd2/report")
+    def report_state():
+        return reports.state()
+
+    @app.post("/api/bd2/report/prepare")
+    def prepare_report():
+        return report_call(reports.prepare)
+
+    @app.post("/api/bd2/report/failure")
+    def respond_failure(body: dict):
+        return report_call(reports.respond_failure, body.get("run"), body.get("generate"))
+
+    @app.post("/api/bd2/report/build")
+    def build_report(body: dict):
+        return report_call(reports.build, body.get("session_id"), body.get("description"))
+
+    @app.post("/api/bd2/report/finish")
+    def finish_report(body: dict):
+        return report_call(reports.finish, body.get("session_id"), body.get("resume", False))
+
+    @app.post("/api/bd2/reports/{report_id}/reveal")
+    def reveal_report(report_id: str):
+        return report_call(reports.reveal, report_id)
+
+    @app.get("/api/bd2/window")
+    def window():
+        return runtime.window_info()
+
+    @app.post("/api/bd2/window/resize")
+    def resize(body: dict):
+        try:
+            return runtime.resize_window(int(body.get("width", 0)), int(body.get("height", 0)))
+        except (ValueError, RuntimeError) as error:
+            raise HTTPException(400, str(error)) from error
+
+    @app.get("/api/bd2/game")
+    def game():
+        return runtime.game_paths()
+
+    @app.post("/api/bd2/starter/cancel")
+    def cancel_starter():
+        controller = runtime.ok.headless_app.start_controller
+        cancelled = bool(controller.starting and controller.cancel_start())
+        if cancelled:
+            STARTER_WAIT.cancel()
+        return {"cancelled": cancelled}
+
+    @app.post("/api/bd2/notify/test")
+    def notify_test(body: dict):
+        try:
+            return runtime.test_notification(str(body.get("channel", "")))
+        except (ValueError, RuntimeError) as error:
+            raise HTTPException(400, str(error)) from error
+
+    @app.post("/api/desktop/launcher/open")
+    def open_launcher():
+        try:
+            return runtime.open_launcher()
+        except (ValueError, RuntimeError) as error:
+            raise HTTPException(400, str(error)) from error
+
+    @app.post("/api/desktop/shutdown")
+    def desktop_shutdown():
+        if request_shutdown is None:
+            raise HTTPException(409, "当前运行方式不能从界面退出")
+        request_shutdown("client-request")
+        return {"accepted": True}
+
+    return app
