@@ -46,6 +46,7 @@ class CountWindowObservation:
 
     count: tuple[int, int] | None
     is_stable: bool
+    limit_confirmed: bool = False
 
 
 def _relative_reference_point(point: tuple[int, int]) -> tuple[float, float]:
@@ -124,6 +125,7 @@ class SkillExecutionResult:
     # final-map warnings without changing the existing positional interface.
     pending_actions: tuple[str, ...] = ()
     press_again: bool = False
+    review_required: bool = False
 
 
 @dataclass(frozen=True)

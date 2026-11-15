@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable
+from uuid import uuid4
 
 from src.tasks.collection.cycle import COLLECTION_REFRESH_HOUR
 from src.tasks.map_trade.data import SHOP_PURCHASE_REFERENCES
@@ -30,8 +32,8 @@ UTC_PLUS_8 = timezone(timedelta(hours=8), name="UTC+8")
 # Version 7 scopes card verification to the action policy that produced it.
 # Version 8 derives skill budgets from trusted HUD counts.
 # Version 11 adds the chapter-18 safe area; older readers would discard that role.
-STATE_SCHEMA_VERSION = 11
-SUPPORTED_STATE_SCHEMA_VERSIONS = frozenset({3, 4, 5, 6, 7, 8, 9, STATE_SCHEMA_VERSION})
+STATE_SCHEMA_VERSION = 13
+SUPPORTED_STATE_SCHEMA_VERSIONS = frozenset({3, 4, 5, 6, 7, 8, 9, 11, 12, STATE_SCHEMA_VERSION})
 _development_directory: Path | None = None
 
 
@@ -119,6 +121,8 @@ class ProgressState:
     observed_counts: dict[str, tuple[int, int]] = field(default_factory=dict)
     weekly_actions: dict[str, dict[str, object]] = field(default_factory=dict)
     cooldown_records: dict[str, str] = field(default_factory=dict)
+    count_epochs: dict[str, dict] = field(default_factory=dict)
+    count_reset_requests: dict[str, dict] = field(default_factory=dict)
 
     def completed_targets(self, card_id: str) -> set[str]:
         allowed = VALID_TARGET_KEYS.get(card_id, frozenset())
@@ -336,6 +340,22 @@ class ProgressStore:
             archived_action_records=archived_records,
             observed_counts=self._sanitize_observed_counts(raw.get("observed_counts", {})),
         )
+        for field_name in ("count_epochs", "count_reset_requests"):
+            values = raw.get(field_name, {})
+            if not isinstance(values, dict) or any(
+                action not in VALID_ACTION_NAMES or not isinstance(value, dict)
+                for action, value in values.items()
+            ):
+                raise RuntimeError("技能计数周期记录损坏，停止消费")
+            setattr(self.state, field_name, deepcopy(values))
+        for epoch in self.state.count_epochs.values():
+            if type(epoch.get("history_offset")) is not int or epoch["history_offset"] < 0:
+                raise RuntimeError("技能计数周期基线损坏，停止消费")
+        totals = {"吸收": self.state.daily_absorbs, "召集": self.state.daily_summons,
+                  "压制": self.state.daily_suppressions}
+        if any(epoch["history_offset"] > totals[action]
+               for action, epoch in self.state.count_epochs.items()):
+            raise RuntimeError("技能计数周期超出历史消耗，停止消费")
         return self._migrate_loaded_state(raw, schema_version, excluded_actions, day)
 
     def _migrate_loaded_state(
@@ -389,6 +409,8 @@ class ProgressStore:
             self.state.depleted_today = False
             self.state.depleted_requirements = {}
             self.state.observed_counts = {}
+            self.state.count_epochs = {}
+            self.state.count_reset_requests = {}
             self.save()
         elif schema_version != STATE_SCHEMA_VERSION or excluded_actions:
             # Persist the current shape immediately after an older compatible load.
@@ -524,7 +546,9 @@ class ProgressStore:
                 and role in VALID_MAP_ROLE_NAMES
                 and action in VALID_ACTION_NAMES
                 and state in valid_states
-                and key == canonical
+                and (key == canonical or (
+                    daily_key is None and key.startswith(canonical + "|attempt:")
+                ))
                 and (daily_key is None or record_daily == daily_key)
             )
             if not valid:
@@ -543,6 +567,7 @@ class ProgressStore:
             record["daily_key"] = record_daily
             record["covered"] = bool(record.get("covered", False))
             record["local_done"] = bool(record.get("local_done", False))
+            record["retry_reserve"] = cls._safe_nonnegative_int(record.get("retry_reserve", 0))
             record["reservation"] = bool(
                 record.get("reservation", state in {
                     CollectionActionState.ARMED.value,
@@ -596,7 +621,7 @@ class ProgressStore:
                     )
                 elif state == CollectionActionState.ARCHIVED.value:
                     record["reservation"] = False
-            records[canonical] = record
+            records[key] = record
         return records
 
     @classmethod
@@ -718,6 +743,8 @@ class ProgressStore:
                 action: list(value)
                 for action, value in self.state.observed_counts.items()
             },
+            "count_epochs": self.state.count_epochs,
+            "count_reset_requests": self.state.count_reset_requests,
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = self.path.with_suffix(self.path.suffix + ".tmp")
@@ -733,7 +760,8 @@ class ProgressStore:
 
     def weekly_action_complete(self, card_id: str, map_role, action: str) -> bool:
         key = "|".join((card_id, self._role_name(map_role), action))
-        return key in self._require_state().weekly_actions
+        record = self._require_state().weekly_actions.get(key)
+        return record is not None and not record.get("needs_review", False)
 
     def _refresh_daily_counters(self) -> None:
         state = self._require_state()
@@ -763,11 +791,119 @@ class ProgressStore:
 
     def _daily_lower_bound(self, action: str) -> int:
         state = self._require_state()
-        return {
+        action = self._action_name(action)
+        total = {
             "吸收": state.daily_absorbs,
             "召集": state.daily_summons,
             "压制": state.daily_suppressions,
-        }.get(self._action_name(action), 0)
+        }.get(action, 0)
+        return max(0, total - state.count_epochs.get(action, {}).get("history_offset", 0))
+
+    def request_count_reset(self, action: str, observed: tuple[int, int]) -> str:
+        state = self._require_state()
+        if self._sanitize_observed_counts({action: observed}).get(action) != observed:
+            return ""
+        previous = self.trusted_action_baseline(action)
+        if previous is None or observed[0] >= previous[0] or observed[1] <= previous[1]:
+            return ""
+        request = state.count_reset_requests.get(action, {})
+        if request.get("before") != list(previous) or request.get("after") != list(observed):
+            request = {
+                "before": list(previous), "after": list(observed),
+                "token": f"{state.daily_key}/{action}/{uuid4().hex[:12]}",
+            }
+            state.count_reset_requests[action] = request
+            self.save()
+        return str(request["token"])
+
+    def confirm_count_reset(self, action: str, observed: tuple[int, int], token: str) -> bool:
+        state = self._require_state()
+        request = state.count_reset_requests.get(action, {})
+        if (
+            not token or request.get("token") != token
+            or self._sanitize_observed_counts({action: observed}).get(action) != observed
+            or request.get("after") != list(observed)
+            or request.get("before") != list(self.trusted_action_baseline(action) or ())
+        ):
+            return False
+        previous_state = deepcopy(state)
+        try:
+            for key, record in list(state.action_records.items()):
+                if record.get("action") == action:
+                    self._archive_attempt(key, record, "用户确认技能升级或重置，旧周期结果保留")
+                    del state.action_records[key]
+            total = {"吸收": state.daily_absorbs, "召集": state.daily_summons,
+                     "压制": state.daily_suppressions}[action]
+            state.count_epochs[action] = {
+                **request, "history_offset": total, "confirmed_at": self.now_provider().isoformat(),
+            }
+            state.observed_counts[action] = observed
+            del state.count_reset_requests[action]
+            self.save()
+        except Exception:
+            self.state = previous_state
+            raise
+        return True
+
+    def _archive_attempt(self, key: str, record: dict, reason: str) -> None:
+        self.state.archived_action_records[f"{key}|attempt:{uuid4().hex}"] = {
+            **deepcopy(record), "previous_state": record["state"],
+            "state": "archived", "status": "archived", "reservation": False,
+            "archive_reason": reason,
+        }
+
+    def review_card_actions(self, card_id: str, actions: Iterable[str], *, roles=None) -> set[str]:
+        state = self._require_state()
+        actions = set(actions)
+        if card_id not in VALID_CARD_IDS or not actions <= VALID_ACTION_NAMES:
+            raise ValueError("invalid collection review")
+        reopened = set()
+        for role in VALID_TARGET_KEYS[card_id]:
+            if roles is not None and role not in roles:
+                continue
+            for action in actions:
+                weekly = state.weekly_actions.get(f"{card_id}|{role}|{action}")
+                record = self.get_action_record(card_id, role, action)
+                if weekly is not None:
+                    weekly["needs_review"] = True
+                    reopened.add(role)
+                if record is not None and record.get("local_done"):
+                    record["needs_review"] = True
+                    reopened.add(role)
+        state.cards[card_id] = sorted(state.completed_targets(card_id) - reopened)
+        state.verified_cards = [value for value in state.verified_cards if value != card_id]
+        for cards in state.verified_card_policies.values():
+            if card_id in cards:
+                cards.remove(card_id)
+        state.visual_completions.pop(card_id, None)
+        self.save()
+        return reopened
+
+    def action_needs_review(self, card_id: str, map_role, action: str) -> bool:
+        key = f"{card_id}|{self._role_name(map_role)}|{action}"
+        weekly = self.state.weekly_actions.get(key, {})
+        record = self.get_action_record(card_id, map_role, action) or {}
+        return bool(weekly.get("needs_review") or record.get("needs_review"))
+
+    def prepare_supplement(self, card_id: str, map_role, action: str) -> bool:
+        record = self.get_action_record(card_id, map_role, action)
+        if record is not None and (
+            record.get("reservation") or record.get("pending")
+            or record.get("state") in {"armed", "clicked", "blocked"}
+        ):
+            return False
+        previous_state = deepcopy(self.state)
+        try:
+            key = self.action_key(card_id, map_role, action)
+            if record is not None:
+                self._archive_attempt(key, record, "现场复核需要补采，保留原施放结果")
+                del self.state.action_records[key]
+            self.state.weekly_actions.pop(f"{card_id}|{self._role_name(map_role)}|{action}", None)
+            self.save()
+        except Exception:
+            self.state = previous_state
+            raise
+        return True
 
     def trusted_action_baseline(self, action: str) -> tuple[int, int] | None:
         """Return the trusted count immediately before a local action."""
@@ -819,11 +955,7 @@ class ProgressStore:
     def _effective_used(self, action: str) -> int:
         state = self._require_state()
         action_name = self._action_name(action)
-        lower_bound = {
-            "吸收": state.daily_absorbs,
-            "召集": state.daily_summons,
-            "压制": state.daily_suppressions,
-        }.get(action_name, 0)
+        lower_bound = self._daily_lower_bound(action_name)
         observed = state.observed_counts.get(action_name, (0, 0))[0]
         reservations = 0
         for record in state.action_records.values():
@@ -850,8 +982,9 @@ class ProgressStore:
                     baseline_used = int(baseline[0])
                 except (TypeError, ValueError, IndexError):
                     continue
-            if baseline_used >= observed:
+            if baseline_used >= observed or record.get("state") in {"armed", "clicked", "blocked"}:
                 reservations += 1
+            reservations += self._safe_nonnegative_int(record.get("retry_reserve", 0))
         return max(lower_bound, observed + reservations)
 
     def effective_daily_counts(self) -> dict[str, int]:
@@ -1024,6 +1157,7 @@ class ProgressStore:
                 if not self.can_reserve_action(action_name):
                     self.mark_depleted_today({action_name: 1})
                     return False
+                self._archive_attempt(key, existing, "重新准备已明确失败的动作")
                 existing["state"] = CollectionActionState.ARMED.value
                 existing["status"] = CollectionActionState.ARMED.value
                 existing["local_done"] = False
@@ -1035,6 +1169,7 @@ class ProgressStore:
                 existing["attempts"] = self._safe_nonnegative_int(
                     existing.get("attempts", 0)
                 ) + 1
+                existing["armed_at"] = self.now_provider().isoformat()
                 self.save()
                 return True
             return False
@@ -1053,6 +1188,8 @@ class ProgressStore:
             "covered": False,
             "reservation": True,
             "attempts": 1,
+            "armed_at": self.now_provider().isoformat(),
+            "count_epoch": state.count_epochs.get(action_name, {}).get("token", ""),
         }
         if baseline is not None:
             record["baseline"] = list(baseline)
@@ -1077,9 +1214,66 @@ class ProgressStore:
             record["state"] = CollectionActionState.CLICKED.value
             record["status"] = CollectionActionState.CLICKED.value
             record["reservation"] = True
+            record["clicked_at"] = self.now_provider().isoformat()
             self.save()
             return True
         return False
+
+    def arm_action_retry(self, card_id, map_role, action, baseline) -> bool:
+        record = self.get_action_record(card_id, map_role, action)
+        if (
+            action != "吸收" or record is None
+            or record.get("state") not in {"armed", "clicked", "blocked"}
+            or record.get("retry_used") or record.get("attempts") != 1
+            or record.get("baseline") != list(baseline)
+            or record.get("count_epoch", "")
+            != self.state.count_epochs.get(action, {}).get("token", "")
+            or self.trusted_action_baseline(action) != baseline
+            or not self.can_reserve_action(action)
+        ):
+            return False
+        previous = deepcopy(self.state)
+        try:
+            self._archive_attempt(self.action_key(card_id, map_role, action), record,
+                                  "同图稳定复核后补点，原投递仍保留一次消耗预留")
+            record.update(state="armed", status="armed", reservation=True,
+                          retry_reserve=1, retry_used=True, attempts=2,
+                          armed_at=self.now_provider().isoformat())
+            self.save()
+        except Exception:
+            self.state = previous
+            raise
+        return True
+
+    def recover_action_increment(self, card_id, map_role, action, observed) -> bool:
+        record = self.get_action_record(card_id, map_role, action)
+        if record is None or observed is None:
+            return False
+        baseline = record.get("baseline")
+        if (
+            record.get("state") not in {"armed", "clicked", "blocked"}
+            or record.get("retry_used") or baseline is None
+            or tuple(baseline) != self.trusted_action_baseline(action)
+            or observed != (baseline[0] + 1, baseline[1])
+            or sum(bool(other.get("reservation")) for other in self.state.action_records.values()
+                   if other.get("action") == action) != 1
+        ):
+            return False
+        self.mark_action_local_done(card_id, map_role, action, pending=False, observed=observed)
+        self.reconcile_pending(action, observed)
+        return True
+
+    def mark_action_unsent(self, card_id, map_role, action) -> None:
+        record = self.get_action_record(card_id, map_role, action)
+        if record is not None and record.get("retry_reserve"):
+            record.update(state="blocked", status="blocked", retry_reserve=0,
+                          retry_used=False, attempts=1, reservation=True,
+                          message="补点准入取消；仅原投递结果待核验")
+            self.save()
+        else:
+            if record is not None:
+                record["attempts"] = max(0, self._safe_nonnegative_int(record.get("attempts")) - 1)
+            self.mark_action_void(card_id, map_role, action, "消费回调未执行")
 
     def mark_action_preexisting_used(
         self,
@@ -1095,6 +1289,11 @@ class ProgressStore:
         existing = self.get_action_record(card_id, role, action)
         if existing is not None and existing.get("state") in {"armed", "clicked", "blocked"}:
             return False
+        if existing is not None and existing.get("local_done"):
+            existing.pop("needs_review", None)
+            self._remember_weekly_action(existing, str(existing.get("source", "click")))
+            self.save()
+            return True
         record = dict(
             daily_key=state.daily_key, card_id=card_id, map_role=role, action=action,
             state="preexisting_used", status="preexisting_used", source="observed",
@@ -1104,59 +1303,6 @@ class ProgressStore:
         self._remember_weekly_action(record, "observed")
         self.save()
         return True
-
-    def invalidate_observed_completion(self, card_id: str, actions: Iterable[str]) -> set[str]:
-        """Reopen unclicked observations contradicted by the card's pending badges."""
-        state = self._require_state()
-        if card_id not in VALID_CARD_IDS:
-            raise ValueError(f"invalid collection card: {card_id}")
-        actions = set(actions)
-        if not actions <= VALID_ACTION_NAMES:
-            raise ValueError("invalid collection actions")
-        reopened = set()
-        for role in VALID_TARGET_KEYS[card_id]:
-            for action in actions:
-                key = f"{card_id}|{role}|{action}"
-                weekly = state.weekly_actions.get(key)
-                records = [
-                    record for record in state.action_records.values()
-                    if record.get("card_id") == card_id
-                    and record.get("map_role") == role and record.get("action") == action
-                ]
-                if weekly is None or weekly.get("source") != "observed":
-                    continue
-                history = [
-                    record for record in state.archived_action_records.values()
-                    if record.get("card_id") == card_id
-                    and record.get("map_role") == role and record.get("action") == action
-                    and str(record.get("daily_key", "")) >= state.weekly_key
-                ]
-                # Never reopen a cast or unresolved intent, even if its weekly
-                # provenance was damaged or replaced by a later observation.
-                if any(
-                    record.get("previous_state", record.get("state")) != "preexisting_used"
-                    or record.get("source") != "observed"
-                    or record.get("attempts", 0) != 0
-                    or record.get("pending") or record.get("reservation")
-                    for record in (*records, *history)
-                ):
-                    continue
-                del state.weekly_actions[key]
-                for record in records:
-                    record.update(
-                        state="void", status="void", local_done=False, covered=False,
-                        message="卡带未完成证据否定未点击的技能观察，需重新核验地图",
-                    )
-                reopened.add(role)
-        if reopened:
-            state.cards[card_id] = sorted(state.completed_targets(card_id) - reopened)
-            state.verified_cards = [key for key in state.verified_cards if key != card_id]
-            for cards in state.verified_card_policies.values():
-                if card_id in cards:
-                    cards.remove(card_id)
-            state.visual_completions.pop(card_id, None)
-            self.save()
-        return reopened
 
     def mark_action_local_done(
         self,
@@ -1177,6 +1323,7 @@ class ProgressStore:
             CollectionActionState.ARCHIVED.value,
         }:
             return False
+        pending = pending or bool(record.get("retry_reserve"))
         next_state = (
             CollectionActionState.PENDING.value
             if pending
@@ -1234,6 +1381,11 @@ class ProgressStore:
         record = self.get_action_record(card_id, map_role, action)
         if record is None:
             return False
+        if record.get("retry_reserve"):
+            record["retry_reserve"] = 0
+            return self.mark_action_blocked(
+                card_id, map_role, action, f"本次失败，原投递仍待核验：{message}",
+            )
         record["state"] = CollectionActionState.VOID.value
         record["status"] = CollectionActionState.VOID.value
         record["local_done"] = False
@@ -1244,11 +1396,15 @@ class ProgressStore:
         self.save()
         return True
 
-    def reconcile_pending(self, action: str, observed: tuple[int, int] | None) -> int:
+    def reconcile_pending(
+        self, action: str, observed: tuple[int, int] | None, *, confirmed_limit: bool = False,
+    ) -> int:
         """Settle pending records from a trusted later absolute snapshot.
 
         Invalid, bare and stale/lower snapshots are ignored. A changed HUD
         limit is accepted only when no unresolved cast depends on the old one.
+        Independently confirmed capacity can also settle completed reservations
+        when its exact positive delta accounts for every outstanding unit.
         Equal snapshots are accepted only when they are at least the local
         lower bound, making repeated reconciliation idempotent.
 
@@ -1264,6 +1420,7 @@ class ProgressStore:
         Args:
             action: The collection action whose pending records are reconciled.
             observed: A trusted absolute (used, limit) count, or None if unknown.
+            confirmed_limit: Stable ordinary and bordered OCR agree on capacity.
 
         Returns:
             The number of records settled. Zero also covers rejected evidence.
@@ -1276,7 +1433,9 @@ class ProgressStore:
         state = self._require_state()
         action_name = self._action_name(action)
         lower_bound = max(0, self._daily_lower_bound(action_name) - self.pending_count(action_name))
-        accepted = self._admit_count_snapshot(action_name, observed, lower_bound)
+        accepted = self._admit_count_snapshot(
+            action_name, observed, lower_bound, confirmed_limit=confirmed_limit,
+        )
         if accepted is None:
             return 0
         used, observed_limit = accepted
@@ -1286,6 +1445,7 @@ class ProgressStore:
                 (key, record)
                 for key, record in state.action_records.items()
                 if str(record.get("action", "")) == action_name
+                and not record.get("retry_reserve")
                 and str(record.get("state", ""))
                 in {
                     CollectionActionState.PENDING.value,
@@ -1347,7 +1507,9 @@ class ProgressStore:
         self.save()
         return settled
 
-    def _admit_count_snapshot(self, action_name, observed, lower_bound) -> tuple[int, int] | None:
+    def _admit_count_snapshot(
+        self, action_name, observed, lower_bound, *, confirmed_limit=False,
+    ) -> tuple[int, int] | None:
         """Validate external count evidence against outstanding reservations and trusted history."""
         if observed is None or action_name not in VALID_ACTION_NAMES or len(observed) != 2:
             return None
@@ -1361,14 +1523,36 @@ class ProgressStore:
         previous = state.observed_counts.get(action_name)
         if previous is not None and used < previous[0]:
             return None
-        for record in state.action_records.values():
-            if record.get("action") != action_name or not record.get("reservation"):
-                continue
+        reservations = [
+            record for record in state.action_records.values()
+            if record.get("action") == action_name and record.get("reservation")
+        ]
+        conflicting = False
+        for record in reservations:
             baseline = record.get("baseline")
             if baseline is not None and baseline[1] != observed_limit:
-                return None
+                conflicting = True
             if baseline is None and previous is not None and previous[1] != observed_limit:
+                conflicting = True
+        if conflicting:
+            # Independent capacity evidence may settle completed casts only
+            # when every reserved unit is accounted for by the exact delta.
+            if (
+                not confirmed_limit or previous is None
+                or any(record.get("retry_reserve") for record in reservations)
+                or used != previous[0] + len(reservations)
+                or len(reservations) != self.pending_count(action_name)
+            ):
                 return None
+            for record in reservations:
+                baseline = record.get("baseline")
+                if (
+                    not record.get("local_done") or not record.get("pending")
+                    or record.get("source") != "click" or baseline is None
+                    or baseline[1] != previous[1]
+                    or not previous[0] <= baseline[0] < used
+                ):
+                    return None
         return used, observed_limit
 
     @staticmethod
@@ -1406,10 +1590,17 @@ class ProgressStore:
                 # baseline and observation. Earliest deadlines first preserve
                 # capacity for records with later baselines.
                 claims = [(previous[0], baseline_used)]
-                for other in state.action_records.values():
+                history = (*state.action_records.values(), *state.archived_action_records.values())
+                for other in history:
+                    outcome = (
+                        other.get("previous_state") if other.get("state") == "archived"
+                        else other.get("state")
+                    )
                     if (
                         other.get("action") != action_name
-                        or other.get("state") != CollectionActionState.SETTLED.value
+                        or other.get("daily_key") != state.daily_key
+                        or other.get("count_epoch", "") != record.get("count_epoch", "")
+                        or outcome != CollectionActionState.SETTLED.value
                     ):
                         continue
                     evidence = other.get("observed")
@@ -1513,6 +1704,7 @@ class ProgressStore:
             if (
                 str(record.get("state", "")) not in accepted_states
                 or not bool(record.get("local_done", False))
+                or bool(record.get("needs_review", False))
             ):
                 return False
         return True

@@ -7,6 +7,10 @@ from difflib import SequenceMatcher
 from functools import partial
 from time import monotonic
 
+import cv2
+import numpy as np
+
+from src.interaction.BD2Interaction import InputTargetChanged
 from src.tasks.map_trade.action_icons import (
     ABSORB_ICON,
     SEARCH_ICON,
@@ -57,6 +61,7 @@ from src.tasks.map_trade.models import (
     MatchResult,
 )
 from src.tasks.map_trade.vision import parse_used_limit
+from src.utils.image_utils import relative_roi_frame
 
 
 class SkillExecutionMixin:
@@ -119,10 +124,11 @@ class SkillExecutionMixin:
                     action, detection, frame=frame, ocr_scale=SKILL_OCR_UPSCALE,
                     known_limit=baseline[1] if baseline else None,
                 )
-                # 新容量必须同时通过两个倍率；已确认容量保留快速双帧路径。
+                # 新容量交叉核对普通与留白读数；已确认容量保留快速双帧路径。
                 if baseline is None or (count is not None and count[1] != baseline[1]):
                     confirmed = self._read_count(
                         action, detection, frame=frame, ocr_scale=SKILL_OCR_FALLBACK_UPSCALE,
+                        bordered=True,
                     )
                     if confirmed != count:
                         count = None
@@ -138,6 +144,7 @@ class SkillExecutionMixin:
         self._report_icon_detection(action, detection)
         result = self._resume_pending_intent(
             action, existing, detection, card_id=card_id, map_role=map_role,
+            read_counts=False,
         )
         if result is None and detection.state is ActionIconState.USED:
             result = self._resolve_preexisting_used(
@@ -150,16 +157,24 @@ class SkillExecutionMixin:
         count = counts[0] if len(counts) == 2 and counts[0] == counts[1] else None
         before, failure = self._prepare_before_click(
             action, detection, card_id=card_id, map_role=map_role,
-            observation=CountWindowObservation(count, count is not None),
+            observation=CountWindowObservation(
+                count, count is not None,
+                count is not None and (baseline is None or count[1] != baseline[1]),
+            ),
         )
         if failure is not None:
             raise RuntimeError(failure.message)
         if not self.progress.arm_action(card_id, map_role, action.name, baseline=before):
             raise RuntimeError("退战压制已被每日额度或未决动作阻止")
         self._status("导航状态", "目标地图已确认，优先压制")
-        self.vision.click_client(
-            detection.match.center, frame.shape, after_sleep=ACTION_AFTER_CLICK_SECONDS,
-        )
+        try:
+            self.vision.click_client(
+                detection.match.center, frame.shape, after_sleep=ACTION_AFTER_CLICK_SECONDS,
+            )
+        except Exception as error:
+            if getattr(error, "input_not_dispatched", False):
+                self.progress.mark_action_unsent(card_id, map_role, action.name)
+            raise
         # The ordinary action loop settles this durable intent; recovery never replays it.
         self.progress.mark_action_clicked(card_id, map_role, action.name)
 
@@ -624,17 +639,18 @@ class SkillExecutionMixin:
         if known_limit is None:
             baseline = self.progress.trusted_action_baseline(action.name)
             known_limit = baseline[1] if baseline is not None else None
-        initial_count = None
+        all_samples: list[tuple[int, int]] = []
         for ocr_scale in (SKILL_OCR_UPSCALE, SKILL_OCR_FALLBACK_UPSCALE):
             samples: list[tuple[int, int]] = []
             for attempt in range(ACTION_OCR_WINDOW_SAMPLES):
                 count = self._read_count(
                     action, detection, ocr_scale=ocr_scale,
-                    known_limit=known_limit, expected_used=expected_used,
+                    known_limit=known_limit,
                     require_fraction=require_fraction,
                 )
                 if count is not None:
                     samples.append(count)
+                    all_samples.append(count)
                 if attempt + 1 < ACTION_OCR_WINDOW_SAMPLES:
                     self.task.sleep(ACTION_OCR_WINDOW_INTERVAL)
             count, occurrences = Counter(samples).most_common(1)[0] if samples else (None, 0)
@@ -647,21 +663,17 @@ class SkillExecutionMixin:
                 f"scale={ocr_scale}；samples={samples}；"
                 f"expected={expected_used}/{expected_limit}；上次容量={known_limit}",
             )
-            if compatible and (
-                occurrences >= 2 or (ocr_scale == SKILL_OCR_FALLBACK_UPSCALE and allow_single)
+            self._last_skill_observations.setdefault(action.name, {}).update(
+                count_samples=list(samples), expected_count=(expected_used, expected_limit),
+            )
+            if (
+                compatible and count[1] == known_limit
+                and all(value[1] == known_limit for value in all_samples)
+                and (
+                    occurrences >= 2
+                    or (ocr_scale == SKILL_OCR_FALLBACK_UPSCALE and allow_single)
+                )
             ):
-                if ocr_scale == SKILL_OCR_UPSCALE and (
-                    known_limit is None or count[1] != known_limit
-                ):
-                    initial_count = count
-                    continue
-                if initial_count is not None and count != initial_count and (
-                    known_limit is None or count[1] != known_limit
-                ):
-                    self._status(f"{action.name}次数校验", "容量确认跨倍率读数冲突，暂不记账")
-                    return CountWindowObservation(None, False)
-                if count[1] != known_limit and occurrences < 2:
-                    return CountWindowObservation(None, False)
                 return CountWindowObservation(count, occurrences >= 2)
             self._status(
                 f"{action.name}次数校验",
@@ -669,9 +681,32 @@ class SkillExecutionMixin:
                 f"预期={expected_used}/{expected_limit}；"
                 + ("以3x新帧复读" if ocr_scale == SKILL_OCR_UPSCALE else "未取得可信读数"),
             )
+        # A repeated wrong denominator survives resizing. Keep the calibrated
+        # crop but change its surrounding background for an independent read.
+        samples = []
+        for _attempt in range(ACTION_OCR_WINDOW_SAMPLES):
+            count = self._read_count(
+                action, detection, ocr_scale=SKILL_OCR_FALLBACK_UPSCALE,
+                known_limit=known_limit,
+                require_fraction=require_fraction, bordered=True,
+            )
+            if count is not None:
+                samples.append(count)
+        count, occurrences = Counter(samples).most_common(1)[0] if samples else (None, 0)
+        compatible = count is not None and (
+            expected_used is None or count[0] == expected_used
+        ) and (expected_limit is None or count[1] == expected_limit)
+        consistent = occurrences >= 2 and len(set(samples)) == 1
+        confirmed = consistent and all_samples.count(count) >= 2 and set(all_samples) == {count}
+        self._status(
+            f"{action.name}次数校验",
+            f"背景留白复读={count}；samples={samples}；容量确认={confirmed}",
+        )
+        if compatible and consistent and (count[1] == known_limit or confirmed):
+            return CountWindowObservation(count, True, confirmed)
         return CountWindowObservation(None, False)
 
-    def _refresh_collection_quota(self, actions: tuple[SkillAction, ...]) -> None:
+    def _refresh_collection_quota(self, actions: tuple[SkillAction, ...]):
         """旧额度不足时，入场复读HUD，避免技能升级后仍按旧容量跳过。"""
         self._quota_checks.update(action.name for action in actions)
         if not self._open_skill_menu(
@@ -681,7 +716,12 @@ class SkillExecutionMixin:
         for action in actions:
             observation = self._read_count_window(action)
             if observation.count is not None and observation.is_stable:
-                self.progress.reconcile_pending(action.name, observation.count)
+                failure = self._check_count_epoch(action, observation)
+                if failure is not None:
+                    return failure
+                self.progress.reconcile_pending(
+                    action.name, observation.count, confirmed_limit=observation.limit_confirmed,
+                )
 
     def _reuse_recent_search(
         self,
@@ -822,16 +862,20 @@ class SkillExecutionMixin:
                 not recovery_only and actions[index:index + 2] == (SUMMON_ACTION, SUPPRESS_ACTION)
             )
             execute = self._use_summon_and_suppress if paired else partial(self._use_action, action)
-            result = execute(card_id=card_id, map_role=map_role)
-            if result.press_again and not recovery_only:
-                self.task.sleep(PRESS_AGAIN_PAUSE_SECONDS)
+            if recovery_only:
+                execute = partial(self._use_action, action, recovery_only=True)
+            for preparation in range(3):
                 result = execute(card_id=card_id, map_role=map_role)
+                if not result.press_again or recovery_only or preparation == 2:
+                    break
+                self.task.sleep(PRESS_AGAIN_PAUSE_SECONDS)
             if not result.completed:
                 return SkillExecutionResult(
                     False,
                     result.depleted,
                     result.message,
                     tuple(pending_actions) + result.pending_actions,
+                    review_required=result.review_required,
                 )
             depleted = depleted or result.depleted
             pending_actions.extend(result.pending_actions)
@@ -852,10 +896,15 @@ class SkillExecutionMixin:
         *,
         card_id: str,
         map_role: CollectionMapRole,
+        recovery_only: bool = False,
     ) -> SkillExecutionResult:
         prepared = self._prepare_action(action, card_id=card_id, map_role=map_role)
         if isinstance(prepared, SkillExecutionResult):
             return prepared
+        if recovery_only:
+            return SkillExecutionResult(
+                False, message=f"{action.name}只读复核尚未结算，未执行补点", review_required=True,
+            )
         failure = self._click_prepared_action(action, prepared, card_id=card_id, map_role=map_role)
         if failure is not None:
             return failure
@@ -876,8 +925,12 @@ class SkillExecutionMixin:
             summon_result = summon
         else:
             suppress = self._prepare_action(SUPPRESS_ACTION, **kwargs)
-            if isinstance(suppress, SkillExecutionResult) and not suppress.completed:
-                return suppress
+            if isinstance(suppress, SkillExecutionResult):
+                if not suppress.completed:
+                    return suppress
+                _before, failure = self._prepare_before_click(SUPPRESS_ACTION, None, **kwargs)
+                if failure is not None:
+                    return failure
             failure = self._click_prepared_action(SUMMON_ACTION, summon, **kwargs)
             if failure is not None:
                 return failure
@@ -889,7 +942,10 @@ class SkillExecutionMixin:
                 if not summon_result.completed:
                     return summon_result
             if isinstance(suppress, SkillExecutionResult):
-                suppress_result = suppress
+                self.progress.review_card_actions(
+                    card_id, (SUPPRESS_ACTION.name,), roles={map_role.value},
+                )
+                suppress_result = self._use_action(SUPPRESS_ACTION, **kwargs)
             else:
                 failure = self._click_prepared_action(SUPPRESS_ACTION, suppress, **kwargs)
                 if failure is not None:
@@ -914,6 +970,7 @@ class SkillExecutionMixin:
             "; ".join(r.message for r in (summon_result, suppress_result) if r.message),
             summon_result.pending_actions + suppress_result.pending_actions,
             press_again=summon_result.press_again or suppress_result.press_again,
+            review_required=summon_result.review_required or suppress_result.review_required,
         )
 
     def _prepare_action(self, action, *, card_id, map_role):
@@ -983,6 +1040,11 @@ class SkillExecutionMixin:
                 )
             return failure
         assert before is not None
+        if self.progress.action_needs_review(card_id, map_role, action.name):
+            if not self.progress.prepare_supplement(card_id, map_role, action.name):
+                return SkillExecutionResult(
+                    False, message=f"{action.name}原施放仍待对账，未执行补采",
+                )
         return detection, before, self._skill_field_generation
 
     def _click_prepared_action(self, action, prepared, *, card_id, map_role):
@@ -1010,15 +1072,45 @@ class SkillExecutionMixin:
                 or remaining < ABSORB_SEARCH_MARGIN_SECONDS
             ):
                 return self._renew_search_for_absorb(card_id=card_id, map_role=map_role)
-        if not self.progress.arm_action(card_id, map_role, action.name, baseline=before):
-            return SkillExecutionResult(
-                False, True, f"{action.name}每日额度或未决动作已阻止新点击",
+        retrying = existing is not None and existing.get("state") in {"armed", "clicked", "blocked"}
+        if retrying:
+            observation = self._read_count_window(action, fresh, require_fraction=True)
+            if not observation.is_stable or observation.count != before:
+                return SkillExecutionResult(
+                    False, message="补点前次数变化，保留原意图等待复核", review_required=True,
+                )
+            frame, recovered = self._capture_skill_field()
+            fresh = self.action_icons.detect(frame, action.icon)
+            if recovered or not self._action_detection_is_stable(detection, fresh):
+                return SkillExecutionResult(False, message="补点前现场变化", press_again=True)
+            if action is ABSORB_ACTION and (
+                self._read_search_countdown(frame) or 0
+            ) < ABSORB_SEARCH_MARGIN_SECONDS:
+                return self._renew_search_for_absorb(card_id=card_id, map_role=map_role)
+            armed = bool(self.task.config.get("未决吸收补点测试", False)) and (
+                self.progress.arm_action_retry(card_id, map_role, action.name, before)
             )
-        self.vision.click_client(
-            fresh.match.center,
-            frame.shape,
-            after_sleep=ACTION_AFTER_CLICK_SECONDS,
-        )
+        else:
+            armed = self.progress.arm_action(card_id, map_role, action.name, baseline=before)
+        if not armed:
+            return SkillExecutionResult(
+                False, message=f"{action.name}额度或补点预算不足，当前动作待核验",
+                review_required=True,
+            )
+        try:
+            self.vision.click_client(
+                fresh.match.center,
+                frame.shape,
+                after_sleep=ACTION_AFTER_CLICK_SECONDS,
+            )
+        except Exception as error:
+            if getattr(error, "input_not_dispatched", False):
+                self.progress.mark_action_unsent(card_id, map_role, action.name)
+            if isinstance(error, InputTargetChanged):
+                return SkillExecutionResult(
+                    False, message="输入等待后重新定位技能，消费尚未发送", press_again=True,
+                )
+            raise
         # CLICKED is durable only after the recognized-center click
         # returns successfully.  A crash/exception during the click
         # therefore leaves the pre-click ARMED intent for safe recovery.
@@ -1052,6 +1144,8 @@ class SkillExecutionMixin:
         existing_state = str(existing.get("state", existing.get("status", "")))
         if existing_state == "blocked" and "invalid_baseline" in existing:
             return SkillExecutionResult(False, message="动作基线损坏，需核对账本后恢复")
+        if existing.get("needs_review"):
+            return None
         if existing_state in {
             "local_done",
             "pending",
@@ -1078,33 +1172,69 @@ class SkillExecutionMixin:
         *,
         card_id: str,
         map_role: CollectionMapRole,
+        read_counts: bool = True,
     ) -> SkillExecutionResult | None:
         if existing is None:
             return None
         existing_state = str(existing.get("state", existing.get("status", "")))
         if existing_state not in {"armed", "clicked", "blocked"}:
             return None
-        if detection.state is ActionIconState.USED:
+        if read_counts and self._collection_target is not None:
+            card, target = self._collection_target
+            if (
+                card.card_id != card_id or target.role != map_role
+                or self.navigator.current_collection_target(card) != target.key
+            ):
+                return SkillExecutionResult(
+                    False, message=f"{action.name}未决复核时目标地图不符", review_required=True,
+                )
+        if detection.state is ActionIconState.USED and detection.stable:
             self.progress.mark_action_local_done(
-                card_id,
-                map_role,
-                action.name,
-                pending=True,
+                card_id, map_role, action.name, pending=True,
             )
             return SkillExecutionResult(
                 True,
-                message="重启后由稳定已使用状态完成；次数待后续明亮帧对账",
+                message="稳定已使用状态已确认；次数待后续明亮帧对账",
                 pending_actions=(action.name,),
             )
+        observation = CountWindowObservation(None, False)
+        if read_counts and detection.stable and detection.state is ActionIconState.AVAILABLE:
+            observation = self._read_count_window(action, detection, require_fraction=True)
+            if observation.count is not None and observation.is_stable:
+                failure = self._check_count_epoch(action, observation)
+                if failure is not None:
+                    return failure
+                if self.progress.get_action_record(card_id, map_role, action.name) is None:
+                    return None
+                if self.progress.recover_action_increment(
+                    card_id, map_role, action.name, observation.count,
+                ):
+                    return SkillExecutionResult(True, message="旧意图的唯一增量已确认，未重新点击")
+        if (
+            action is ABSORB_ACTION
+            and bool(self.task.config.get("未决吸收补点测试", False))
+            and detection.state is ActionIconState.AVAILABLE and detection.stable
+            and observation.is_stable and observation.count is not None
+            and existing.get("baseline") == list(observation.count)
+            and not existing.get("retry_used") and existing.get("attempts") == 1
+            and self.progress.can_reserve_action(action.name)
+        ):
+            self._status(f"{action.name}状态", "原次数稳定未变，补点前再次核验现场和额度")
+            return None
+        count_text = (
+            f"{observation.count[0]}/{observation.count[1]}"
+            if observation.count is not None else "未读清"
+        )
+        message = f"{action.name}旧点击待核验；当前次数={count_text}，保留预留并跳过本卡"
         self.progress.mark_action_blocked(
             card_id,
             map_role,
             action.name,
-            "上次点击意图未决，禁止重复点击",
+            message,
         )
         return SkillExecutionResult(
             False,
-            message=f"{action.name}上次点击意图未决，禁止重复点击",
+            message=message, review_required=True,
         )
 
     def _resolve_preexisting_used(
@@ -1124,30 +1254,22 @@ class SkillExecutionMixin:
     def _prepare_before_click(
         self,
         action: SkillAction,
-        detection: ActionIconDetection,
+        detection: ActionIconDetection | None,
         *,
         card_id: str,
         map_role: CollectionMapRole,
         observation: CountWindowObservation | None = None,
     ) -> tuple[tuple[int, int] | None, SkillExecutionResult | None]:
-        # A fresh run may observe casts performed outside this task. During a
-        # continuous run, changes must be covered by our recorded consumption.
-        expected_used = (
-            self.progress.effective_used(action.name)
-            if action.name in self._count_actions_seen else None
-        )
         fresh_pending = (
             action.name not in self._count_actions_seen
             and self.progress.pending_count(action.name) > 0
         )
         if observation is None or fresh_pending:
             observation = self._read_count_window(
-                action, detection, expected_used=expected_used,
-                require_fraction=fresh_pending,
+                action, detection, require_fraction=True,
             )
         elif (
             observation.count is None or not observation.is_stable
-            or (expected_used is not None and observation.count[0] != expected_used)
         ):
             observation = CountWindowObservation(None, False)
         before = observation.count
@@ -1157,14 +1279,19 @@ class SkillExecutionMixin:
                 message=f"{action.name}未取得可信次数，未执行新点击",
             )
         self._status(f"{action.name}次数", f"{before[0]}/{before[1]}")
-        settled = self.progress.reconcile_pending(action.name, before)
+        failure = self._check_count_epoch(action, observation)
+        if failure is not None:
+            return None, failure
+        settled = self.progress.reconcile_pending(
+            action.name, before, confirmed_limit=observation.limit_confirmed,
+        )
         if settled:
             self._status(
                 f"{action.name}次数对账",
                 f"明亮帧结算 {settled} 条待对账动作",
             )
         remaining_pending = self.progress.pending_count(action.name)
-        if remaining_pending:
+        if remaining_pending and not self.progress.can_reserve_action(action.name):
             return None, SkillExecutionResult(
                 False,
                 message=(
@@ -1177,7 +1304,7 @@ class SkillExecutionMixin:
                 False,
                 message=f"{action.name}次数与账本记录冲突，未执行新点击",
             )
-        if detection.state is ActionIconState.AVAILABLE and before[0] >= before[1]:
+        if before[0] >= before[1]:
             return None, SkillExecutionResult(
                 False,
                 True,
@@ -1185,6 +1312,29 @@ class SkillExecutionMixin:
             )
         self._count_actions_seen.add(action.name)
         return before, None
+
+    def _check_count_epoch(self, action, observation):
+        before = observation.count
+        previous = self.progress.trusted_action_baseline(action.name)
+        if previous is not None and before[0] < previous[0]:
+            token = (
+                self.progress.request_count_reset(action.name, before)
+                if observation.limit_confirmed else ""
+            )
+            confirmation = str(self.task.config.get("次数重置确认码", "")).strip()
+            if not token or not self.progress.confirm_count_reset(
+                action.name, before, confirmation,
+            ):
+                message = (
+                    f"{action.name}次数由{previous[0]}/{previous[1]}变为{before[0]}/{before[1]}，"
+                    "需确认技能升级或重置"
+                    + (f"；确认后在跑图设置填写次数重置确认码：{token}"
+                       if token else "；请复核技能与账号")
+                )
+                self._status("次数周期核验", message)
+                return SkillExecutionResult(False, message=message)
+            self._status("次数周期核验", f"{action.name}已按确认建立新周期，历史施放保留")
+        return None
 
     def _finish_after_click(
         self,
@@ -1258,7 +1408,9 @@ class SkillExecutionMixin:
                     observed=after,
                 )
                 self.progress.reconcile_pending(action.name, after)
-                pending = False
+                pending = bool(self.progress.get_action_record(
+                    card_id, map_role, action.name,
+                ).get("pending"))
             else:
                 self.progress.mark_action_local_done(
                     card_id,
@@ -1291,11 +1443,17 @@ class SkillExecutionMixin:
                 expected_limit=before[1],
             )
             if unchanged.count is not None:
-                self.progress.mark_action_void(
-                    card_id, map_role, action.name, "图标仍亮且次数稳定未变"
+                self.progress.mark_action_blocked(
+                    card_id, map_role, action.name,
+                    "点击已发送，图标仍亮且暂未见次数变化；保留未知结果",
                 )
                 return SkillExecutionResult(
-                    False, message=f"{action.name}点击未生效", press_again=True
+                    False,
+                    message=f"{action.name}稳定读到{before[0]}/{before[1]}，未见增量，待核验",
+                    press_again=bool(action is ABSORB_ACTION and self.task.config.get(
+                        "未决吸收补点测试", False,
+                    )),
+                    review_required=True,
                 )
 
         return SkillExecutionResult(
@@ -1444,6 +1602,7 @@ class SkillExecutionMixin:
         expected_used: int | None = None,
         frame=None,
         require_fraction: bool = False,
+        bordered: bool = False,
     ) -> tuple[int, int] | None:
         # The calibrated fixed ROI is intentionally reused at 3x after a 2x
         # miss.  This catches the reproduced dark ``2`` without widening the
@@ -1456,26 +1615,30 @@ class SkillExecutionMixin:
         for index, scale in enumerate(scales):
             count_frame = self.vision.capture() if frame is None else frame
             if action.fixed_count_relative_roi is not None:
-                text = self.vision.ocr_text(
-                    count_frame,
-                    f"{action.name}次数",
-                    relative_roi=action.fixed_count_relative_roi,
-                    target_height=1080,
-                    ocr_scale=scale,
-                )
+                relative_roi = action.fixed_count_relative_roi
             elif detection is not None:
-                text = self.vision.ocr_text(
-                    count_frame,
-                    f"{action.name}次数",
-                    relative_roi=self._action_text_relative_roi(
-                        detection,
-                        count_frame.shape,
-                    ),
-                    target_height=1080,
-                    ocr_scale=scale,
+                relative_roi = self._action_text_relative_roi(
+                    detection, count_frame.shape,
                 )
             else:
                 return None
+            if bordered:
+                _left, _top, crop = relative_roi_frame(count_frame, relative_roi)
+                if not crop.size:
+                    return None
+                color = np.median(crop, axis=(0, 1)).tolist()
+                margin = max(1, crop.shape[0] // 2)
+                count_frame = cv2.copyMakeBorder(
+                    crop, margin, margin, margin, margin,
+                    cv2.BORDER_CONSTANT, value=color,
+                )
+                relative_roi = None
+            text = self.vision.ocr_text(
+                count_frame, f"{action.name}次数", relative_roi=relative_roi,
+                target_height=1080, ocr_scale=scale,
+            )
+            self._status(f"{action.name}原始次数", text or "未读清")
+            self._last_skill_observations.setdefault(action.name, {})["raw_count"] = text[:80]
             if require_fraction and not re.fullmatch(r"\s*\d+\s*[/YyVv]\s*\d+\s*", text):
                 continue
             # 完整分数携带当前技能容量；旧容量只帮助恢复丢失的分隔符。
@@ -1603,6 +1766,29 @@ class SkillExecutionMixin:
                 return None
             if attempt + 1 < ACTION_OCR_WINDOW_SAMPLES:
                 self.task.sleep(SEARCH_COUNTDOWN_INTERVAL)
+        now = monotonic()
+        if any(
+            cached_card == card_id and expires_at > now
+            for (cached_card, _role), expires_at in self._search_expires_at.items()
+        ):
+            self._status("探查倒计时", "近期探查倒计时漏读，等待新帧确认或图标恢复")
+            end_at = now + SEARCH_RENEW_TIMEOUT
+            while monotonic() < end_at:
+                observed_at = monotonic()
+                frame, _recovered = self._capture_skill_field()
+                seconds = self._read_search_countdown(frame)
+                search = self.action_icons.detect(frame, SEARCH_ICON)
+                remaining = (seconds or 0) - (monotonic() - observed_at)
+                if monotonic() >= end_at:
+                    break
+                if search.state is ActionIconState.AVAILABLE:
+                    return self._start_search(card_id=card_id, map_role=map_role)
+                if remaining >= ABSORB_SEARCH_MARGIN_SECONDS:
+                    return SearchCountdownSession(SEARCH_COUNTDOWN_RELATIVE_ROI, int(remaining))
+                self.task.sleep(SEARCH_COUNTDOWN_INTERVAL)
+            return SkillExecutionResult(
+                False, message="近期探查倒计时持续漏读且图标未恢复，未执行吸收",
+            )
         started = self._start_search(card_id=card_id, map_role=map_role)
         if not isinstance(started, SkillExecutionResult):
             return started
