@@ -18,7 +18,7 @@ from src.process_feature import process_feature
 
 # This marker is replaced with the Git tag when PyAppify creates the update
 # repository.  Source checkouts always read the project version from pyproject.
-version = "v2.0.1"
+version = "v2.0.3"
 
 
 def runtime_version(project_file: Path | None = None) -> str:
@@ -162,6 +162,7 @@ config = {
         ["src.tasks.MapCollectionTask", "MapCollectionTask"],
         ["src.tasks.MapTradeTask", "MapTradeTask"],
         ["src.tasks.PVPTask", "PVPTask"],
+        ["src.tasks.MissionRewardTask", "MissionRewardTask"],
         ["src.tasks.BD2InputTestTask", "BD2MouseClickInputTestTask"],
         ["src.tasks.BD2InputTestTask", "BD2MouseWheelInputTestTask"],
         ["src.tasks.LauncherTask", "LauncherTask"],
