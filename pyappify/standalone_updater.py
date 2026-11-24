@@ -1,0 +1,417 @@
+"""Console process that applies a standalone update after the app exits.
+
+Started by :func:`pyappify.standalone.update_to_version` as::
+
+    python -m pyappify.standalone_updater <state dir>/update-job.json
+
+in its own console window, so the user can watch the update log; the same log
+is appended to ``update.log`` next to the job. The state dir is
+``.git/pyappify`` for a plain clone and ``<app>/pyappify-update`` for the
+launcher's layout, whose older installs are converted to the shared-checkout
+layout first (see :mod:`pyappify.standalone`). Steps:
+
+1. wait for the app to exit, stopping it after a grace period (as the launcher
+   stops the app before updating);
+2. check out the version (a tag or pull request leaves HEAD detached, a branch
+   becomes the checked-out branch) and update submodules;
+3. ``pip install`` the profile's requirements if they changed;
+4. on failure, check out the previous commit again;
+5. restart the app, with ``PYAPPIFY_APP_VERSION``, ``PYAPPIFY_APP_STARTING_VERSION``
+   and ``PYAPPIFY_UPDATE_NOTE`` set after a successful update;
+6. on Windows, refresh the Start Menu shortcut (and the Desktop one if it
+   exists), as the launcher does.
+
+On success the window closes after a few seconds; on failure it stays open
+until the user presses Enter. :mod:`pyappify.updater_ui` runs the same steps
+in a progress window, through the ``progress`` callback of :func:`run_job`.
+"""
+import json
+import logging
+import os
+import signal
+import subprocess
+import sys
+import time
+
+from . import _process, shortcut, standalone, pip_index
+
+SUCCESS_CLOSE_DELAY_SECONDS = 3
+APP_STOP_TIMEOUT_SECONDS = 15
+
+# Steps of an update, reported to ``progress(step, status, detail)``.
+STEP_STOP = "stop"
+STEP_CHECKOUT = "checkout"
+STEP_DEPENDENCIES = "dependencies"
+STEP_RESTART = "restart"
+STEP_ROLLBACK = "rollback"
+STEPS = (STEP_STOP, STEP_CHECKOUT, STEP_DEPENDENCIES, STEP_RESTART)
+STATUS_ACTIVE = "active"
+STATUS_DONE = "done"
+STATUS_SKIPPED = "skipped"
+STATUS_FAILED = "failed"
+# pip output lines worth showing as the dependency step's detail.
+PIP_PROGRESS_PREFIXES = ("Collecting ", "Downloading ", "Installing ", "Building ", "Successfully ")
+
+
+def _no_progress(step, status, detail=None):
+    pass
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if len(argv) != 1:
+        print("usage: python -m pyappify.standalone_updater <update-job.json>")
+        return 2
+    job_path = os.path.abspath(argv[0])
+    with open(job_path, "r", encoding="utf-8") as job_file:
+        job = json.load(job_file)
+
+    log = _setup_logging(os.path.join(os.path.dirname(job_path), standalone.LOG_FILE_NAME))
+    _set_console_title("Updating to {}".format(job.get("version")))
+    try:
+        succeeded = run_job(job, log)
+    except Exception:
+        log.exception("Update failed unexpectedly.")
+        succeeded = False
+    finally:
+        _remove(job_path)
+
+    if succeeded:
+        log.info("Done. This window closes in %s seconds.", SUCCESS_CLOSE_DELAY_SECONDS)
+        time.sleep(SUCCESS_CLOSE_DELAY_SECONDS)
+        return 0
+    _pause("Update failed. Press Enter to close this window.")
+    return 1
+
+
+def run_job(job, log, progress=None):
+    """Apply the update described by ``job``; return whether it succeeded.
+
+    ``progress(step, status, detail=None)`` is called as each of ``STEPS``
+    (and ``STEP_ROLLBACK`` on failure) starts and ends.
+    """
+    progress = progress or _no_progress
+    repo_path = job["repo_path"]
+    version = job["version"]
+    previous_commit = job["previous_commit"]
+    log.info("Updating %s", repo_path)
+    log.info("From %s to %s", job.get("previous_version") or previous_commit[:12], version)
+
+    progress(STEP_STOP, STATUS_ACTIVE, "Waiting for the app to close")
+    if not stop_app(job.get("pid"), job.get("exit_timeout", standalone.APP_EXIT_TIMEOUT_SECONDS), log):
+        progress(STEP_STOP, STATUS_FAILED, "The app did not exit")
+        return False
+    progress(STEP_STOP, STATUS_DONE)
+
+    progress(STEP_CHECKOUT, STATUS_ACTIVE, "Checking out {}".format(version))
+    if standalone.is_launcher_layout(repo_path) and not standalone.is_bare_repo(repo_path):
+        try:
+            standalone.migrate_to_bare_layout(repo_path, log)
+        except Exception as error:
+            log.error("Could not convert %s to the shared-checkout layout: %s", repo_path, error)
+            progress(STEP_CHECKOUT, STATUS_FAILED, str(error))
+            return False
+
+    try:
+        apply_version(repo_path, version, job.get("profile"), log, progress)
+    except Exception as error:
+        log.error("Update to %s failed: %s", version, error)
+        progress(STEP_ROLLBACK, STATUS_ACTIVE, "Restoring {}".format(previous_commit[:12]))
+        if rollback(repo_path, previous_commit, log, job.get("previous_ref")):
+            progress(STEP_ROLLBACK, STATUS_DONE)
+            relaunch(job, {}, log)
+        else:
+            progress(STEP_ROLLBACK, STATUS_FAILED)
+        return False
+
+    progress(STEP_RESTART, STATUS_ACTIVE, "Starting the app")
+    process = relaunch(job, version_environment(job), log)
+    refresh_shortcuts(job, log)
+    progress(STEP_RESTART, STATUS_DONE if process else STATUS_SKIPPED)
+    log.info("Updated to %s.", version)
+    return True
+
+
+def version_environment(job):
+    """The app version variables for the restarted app; None removes one.
+
+    Only a version tag is an app version. On a branch or pull request the app
+    detects its version itself, as on any other start from that checkout.
+    """
+    version = job["version"]
+    managed = standalone.is_launcher_layout(job["repo_path"])
+    if not managed and standalone.version_kind(version) != standalone.KIND_TAG:
+        return {
+            "PYAPPIFY_APP_VERSION": None,
+            "PYAPPIFY_APP_STARTING_VERSION": None,
+            "PYAPPIFY_UPDATE_NOTE": None,
+        }
+    update_note = job.get("update_note") or []
+    return {
+        "PYAPPIFY_APP_VERSION": version,
+        "PYAPPIFY_APP_STARTING_VERSION": job.get("previous_version") or version,
+        "PYAPPIFY_UPDATE_NOTE": json.dumps(update_note, ensure_ascii=False) if update_note else "",
+    }
+
+
+def refresh_shortcuts(job, log):
+    """Refresh the app's shortcuts as the launcher does; failures are only logged."""
+    relaunch_info = job.get("relaunch") or {}
+    argv = relaunch_info.get("argv")
+    if os.name != "nt" or not argv or not job.get("refresh_shortcuts"):
+        return []
+    try:
+        paths = shortcut.refresh_shortcuts(
+            command=argv,
+            working_dir=relaunch_info.get("cwd") or standalone.app_files_dir(job["repo_path"]),
+            profile=job.get("profile") or "",
+        )
+    except Exception as error:
+        log.warning("Could not refresh the app's shortcuts: %s", error)
+        return []
+    for path in paths:
+        log.info("Refreshed shortcut %s", path)
+    if not paths:
+        log.info("Shortcuts are up to date.")
+    return paths
+
+
+def stop_app(pid, grace_seconds, log):
+    """Wait for the app to exit, then stop it; return whether it is gone."""
+    if not pid or not _process._is_process_running(pid):
+        return True
+    log.info("Waiting up to %s seconds for the app (PID %s) to exit...", grace_seconds, pid)
+    if _process._wait_for_process_exit(pid, grace_seconds):
+        return True
+    log.info("The app is still running. Stopping it.")
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError as error:
+        log.warning("Could not stop PID %s: %s", pid, error)
+    if _process._wait_for_process_exit(pid, APP_STOP_TIMEOUT_SECONDS):
+        return True
+    log.error("The app (PID %s) did not exit. Close it and update again.", pid)
+    return False
+
+
+def apply_version(repo_path, version, profile, log, progress=None):
+    """Check out ``version``, update submodules and sync requirements if needed.
+
+    In the launcher's layout tracked files are forced to the new version, as
+    the launcher does; a plain clone with local changes is not touched.
+    """
+    progress = progress or _no_progress
+    current_step = [STEP_CHECKOUT]
+    try:
+        _apply_version(repo_path, version, profile, log, progress, current_step)
+    except Exception as error:
+        progress(current_step[0], STATUS_FAILED, str(error))
+        raise
+
+
+def _apply_version(repo_path, version, profile, log, progress, current_step):
+    managed = standalone.is_launcher_layout(repo_path)
+    with standalone.open_repo(repo_path) as repo:
+        if not managed and standalone.has_local_changes(repo):
+            raise standalone.StandaloneUpdateError(
+                "tracked files have local changes; commit or stash them first"
+            )
+        old_commit = repo.head()
+        _kind, target_commit, branch = standalone.resolve_version(repo, version, tags_only=managed)
+        old_spec, _old_args, old_content = standalone.requirements_at(repo, old_commit, profile)
+
+        log.info("Checking out %s (%s)...", version, target_commit.decode("ascii")[:12])
+        _checkout(repo, target_commit, log, force=managed)
+        if branch:
+            standalone.attach_branch(repo, branch, target_commit)
+            log.info("On branch %s.", branch)
+
+        new_spec, new_args, new_content = standalone.requirements_at(repo, target_commit, profile)
+
+    progress(STEP_CHECKOUT, STATUS_DONE)
+    current_step[0] = STEP_DEPENDENCIES
+    files_dir = standalone.app_files_dir(repo_path)
+
+    def install():
+        progress(STEP_DEPENDENCIES, STATUS_ACTIVE, "Running pip install")
+        pip_install(
+            files_dir, new_spec, new_args, log,
+            on_line=lambda line: progress(STEP_DEPENDENCIES, STATUS_ACTIVE, line),
+        )
+        progress(STEP_DEPENDENCIES, STATUS_DONE)
+
+    if not new_spec:
+        log.info("No requirements configured. Skipping dependency sync.")
+        progress(STEP_DEPENDENCIES, STATUS_SKIPPED, "No requirements configured")
+    elif old_spec != new_spec:
+        log.info("Requirements changed from '%s' to '%s'. Syncing dependencies.", old_spec, new_spec)
+        install()
+    elif old_content != new_content:
+        changed_file = new_spec if new_spec.endswith(".txt") else "pyproject.toml"
+        log.info("%s changed. Syncing dependencies.", changed_file)
+        install()
+    else:
+        log.info("Requirements are up to date. Skipping dependency sync.")
+        progress(STEP_DEPENDENCIES, STATUS_SKIPPED, "Requirements are up to date")
+
+
+def rollback(repo_path, previous_commit, log, previous_ref=None):
+    """Check out ``previous_commit`` again, on the branch ``previous_ref`` if any."""
+    log.info("Rolling back to %s...", previous_commit[:12])
+    try:
+        with standalone.open_repo(repo_path) as repo:
+            commit = previous_commit.encode("ascii")
+            _checkout(repo, commit, log, force=standalone.is_launcher_layout(repo_path))
+            prefix = standalone.BRANCH_PREFIX.decode("ascii")
+            if previous_ref and previous_ref.startswith(prefix):
+                standalone.attach_branch(repo, previous_ref[len(prefix):], commit)
+    except Exception as error:
+        log.error("Rollback failed: %s", error)
+        return False
+    log.info("Rolled back. The app stays on its previous version.")
+    return True
+
+
+def _checkout(repo, commit_id, log, force=False):
+    porcelain = standalone._dulwich().porcelain
+    porcelain.checkout(repo, repo[commit_id], force=force)
+    if os.path.isfile(os.path.join(repo.path, ".gitmodules")):
+        log.info("Updating submodules...")
+        standalone.link_submodule_work_trees(repo, log)
+        porcelain.submodule_update(repo, init=True, recursive=True)
+
+
+def pip_install(repo_path, spec, pip_args, log, on_line=None):
+    command = [sys.executable, "-m", "pip", "install", "--no-warn-script-location"]
+    args = pip_args.split()
+    command.extend(args)
+    explicit_index = any(
+        arg in ("--index-url", "-i") or arg.startswith("--index-url=")
+        or (arg.startswith("-i") and len(arg) > 2) for arg in args
+    )
+    if not explicit_index:
+        url = pip_index.read_url(repo_path, log=log)
+        if url:
+            command.extend(["--index-url", url])
+    if spec.endswith(".txt"):
+        requirements_path = os.path.join(repo_path, spec)
+        if not os.path.isfile(requirements_path):
+            raise standalone.StandaloneUpdateError(
+                "Requirements file not found at {}".format(requirements_path)
+            )
+        command.extend(["-r", requirements_path])
+    else:
+        command.extend(spec.split())
+
+    log.info("Running: %s", subprocess.list2cmdline(command))
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    kwargs = {}
+    if os.name == "nt":
+        # The output is piped; without this a windowed updater flashes a console.
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    process = subprocess.Popen(
+        command,
+        cwd=repo_path,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        encoding="utf-8",
+        errors="replace",
+        **kwargs
+    )
+    for line in process.stdout:
+        line = line.rstrip()
+        log.info("  %s", line)
+        if on_line and line.lstrip().startswith(PIP_PROGRESS_PREFIXES):
+            on_line(line.strip())
+    if process.wait() != 0:
+        raise standalone.StandaloneUpdateError(
+            "pip install exited with code {}".format(process.returncode)
+        )
+
+
+def relaunch(job, env_updates, log):
+    relaunch_info = job.get("relaunch") or {}
+    argv = relaunch_info.get("argv")
+    if not argv:
+        log.info("No restart command was recorded; start the app yourself.")
+        return None
+
+    env = os.environ.copy()
+    pythonpath = relaunch_info.get("pythonpath")
+    if pythonpath is None:
+        env.pop("PYTHONPATH", None)
+    else:
+        env["PYTHONPATH"] = pythonpath
+    for name, value in env_updates.items():
+        if value is None:
+            env.pop(name, None)
+        else:
+            env[name] = value
+
+    kwargs = {"cwd": relaunch_info.get("cwd") or None, "env": env, "close_fds": True}
+    if os.name == "nt":
+        gui = os.path.basename(argv[0]).lower() == "pythonw.exe"
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | (
+            subprocess.DETACHED_PROCESS if gui else subprocess.CREATE_NEW_CONSOLE
+        )
+    else:
+        kwargs["start_new_session"] = True
+    try:
+        process = subprocess.Popen(argv, **kwargs)
+    except OSError as error:
+        log.error("Could not restart the app (%s): %s", subprocess.list2cmdline(argv), error)
+        return None
+    log.info("Restarted the app (PID %s).", process.pid)
+    return process
+
+
+def _setup_logging(log_path, console=True):
+    log = logging.getLogger("pyappify.standalone_updater")
+    log.setLevel(logging.INFO)
+    log.propagate = False
+    for handler in list(log.handlers):
+        log.removeHandler(handler)
+        handler.close()
+
+    if console and sys.stdout is not None:
+        stream = logging.StreamHandler(sys.stdout)
+        stream.setFormatter(logging.Formatter("[%(asctime)s] %(message)s", "%H:%M:%S"))
+        log.addHandler(stream)
+    try:
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        log_file = logging.FileHandler(log_path, encoding="utf-8")
+        log_file.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        log.addHandler(log_file)
+    except OSError as error:
+        log.warning("Cannot write the update log to %s: %s", log_path, error)
+    return log
+
+
+def _set_console_title(title):
+    if os.name == "nt" and _process.ctypes:
+        try:
+            _process.ctypes.windll.kernel32.SetConsoleTitleW(title)
+        except Exception:
+            pass
+
+
+def _pause(message):
+    if not sys.stdin or not sys.stdin.isatty():
+        return
+    try:
+        input(message)
+    except (EOFError, KeyboardInterrupt):
+        pass
+
+
+def _remove(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+if __name__ == "__main__":
+    sys.exit(main())

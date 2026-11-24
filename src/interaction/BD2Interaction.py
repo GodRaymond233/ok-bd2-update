@@ -18,6 +18,9 @@ CLICK_MODE_BACKGROUND = "测试版方案（后台点击）"
 CLICK_MODE_OPTIONS = (CLICK_MODE_STANDARD, CLICK_MODE_BACKGROUND)
 INPUT_WAIT_TIMEOUT = 30.0
 INPUT_WAIT_INTERVAL = 0.25
+# 锁屏 / UAC 安全桌面下光标接口报 0 或 5（拒绝访问）。其它窗口类错误（例如
+# 1400 无效窗口句柄）跟输入桌面无关，必须原样抛出，不能被当成"等 30 秒"吞掉。
+INPUT_DESKTOP_WINERRORS = frozenset({0, ERROR_ACCESS_DENIED})
 MOUSE_PRESS_MIN_SECONDS = 0.05
 MOUSE_RELEASE_SETTLE_SECONDS = 0.05
 
@@ -37,9 +40,12 @@ class BD2Interaction(PostMessageInteraction):
         self._click_mode_provider: Callable[[], str] | None = None
         self.user32 = ctypes.windll.user32
         self._activate_required = True
-        self.hwnd_window.visible_monitors.append(self)
+        # ok-script 3.0.10's PostMessageInteraction registers itself already.
+        if self not in self.hwnd_window.visible_monitors:
+            self.hwnd_window.visible_monitors.append(self)
 
     def on_visible(self, visible):
+        super().on_visible(visible)
         self._activate_required = not visible
 
     def target_context(self):
@@ -130,7 +136,7 @@ class BD2Interaction(PostMessageInteraction):
                 if should_restore:
                     self.cursor_position = GetCursorPos()
                 abs_x, abs_y = self.capture.get_abs_cords(x, y)
-                SetCursorPos((abs_x, abs_y))
+                self._place_cursor((abs_x, abs_y))
                 time.sleep(0.025)
 
             click_pos = win32api.MAKELONG(x, y)
@@ -172,19 +178,30 @@ class BD2Interaction(PostMessageInteraction):
             return False
 
     def wait_for_input(self, wait=time.sleep, status=None):
-        """Wait for cursor access before any callback or input blocking starts."""
+        """Wait until the input desktop accepts cursor control.
+
+        Reading the cursor is not enough: on the lock screen (or the UAC secure
+        desktop) ``GetCursorPos`` still succeeds while ``SetCursorPos`` is
+        refused, so a click used to die mid-task with
+        ``pywintypes.error: (0, 'SetCursorPos', ...)``.  Probe both APIs here,
+        before any callback or input blocking starts, and wait for the desktop
+        to come back the same way the old ``GetCursorPos`` probe did.
+        """
+
         deadline = time.monotonic() + INPUT_WAIT_TIMEOUT
         interrupted = False
         while True:
             try:
                 position = GetCursorPos()
-            except win32api.error as error:
-                if error.winerror != ERROR_ACCESS_DENIED:
+                SetCursorPos(position)
+            except Exception as error:
+                winerror = getattr(error, "winerror", None)
+                if winerror is not None and winerror not in INPUT_DESKTOP_WINERRORS:
                     raise
                 if not interrupted:
                     interrupted = True
-                    message = "输入桌面暂不可用（可能为UAC），等待恢复，最长30秒"
-                    logger.warning(message)
+                    message = "输入桌面暂不可用（可能为锁屏/UAC），等待恢复，最长30秒"
+                    logger.warning(f"{message}: {error}")
                     if status is not None:
                         status(message)
                 remaining = deadline - time.monotonic()
@@ -296,6 +313,22 @@ class BD2Interaction(PostMessageInteraction):
         with self._input_lock:
             return super().mouse_up(key=key)
 
+    def _place_cursor(self, position, attempts: int = 3):
+        """Move the cursor onto the click target; a momentary desktop switch wins
+        a retry instead of aborting the whole task."""
+
+        for attempt in range(1, attempts + 1):
+            try:
+                SetCursorPos(position)
+                return
+            except Exception as error:
+                if attempt >= attempts:
+                    raise TimeoutError(
+                        "鼠标位置无法设置（输入桌面不可用），本次点击尚未发送"
+                    ) from error
+                logger.warning(f"place cursor retry {attempt}/{attempts}: {error}")
+                time.sleep(0.05)
+
     def _restore_cursor(self):
         time.sleep(0.025)
         try:
@@ -324,9 +357,12 @@ class BD2Interaction(PostMessageInteraction):
             i = INPUT(0, mi)
             SendInput(1, ctypes.pointer(i), ctypes.sizeof(INPUT))
 
-    def try_activate(self):
+    def try_activate(self, force=False):
         if self.hwnd_window.is_foreground():
             self._activate_required = False
             return
-        super().try_activate()
+        # ok-script 3.0.10 sends WM_ACTIVATE once per foreground change; BD2 keeps
+        # activating the background game before every input, the behaviour its
+        # background clicks were verified with on ok-script 3.0.4.
+        super().try_activate(force=True)
         self._activate_required = not self.hwnd_window.is_foreground()

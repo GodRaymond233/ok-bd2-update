@@ -8,6 +8,7 @@ from ok import Box
 from ok.util.GlobalConfig import create_basic_options
 
 from src import GAME_EXE, HWND_CLASS
+from src.compat.app_shortcuts import disable_framework_shortcuts
 from src.compat.executor_cleanup import enable_executor_cleanup
 from src.compat.starter_guard import enable_starter_launch_guard
 from src.compat.starter_launch import enable_starter_launch_uri
@@ -18,7 +19,7 @@ from src.process_feature import process_feature
 
 # This marker is replaced with the Git tag when PyAppify creates the update
 # repository.  Source checkouts always read the project version from pyproject.
-version = "v2.0.5"
+version = "v2.1.0"
 
 
 def runtime_version(project_file: Path | None = None) -> str:
@@ -32,6 +33,7 @@ def runtime_version(project_file: Path | None = None) -> str:
     return version
 
 enable_executor_cleanup()
+disable_framework_shortcuts()
 enable_windows_10_wgc()
 enable_starter_launch_uri()
 enable_starter_launch_guard()
@@ -75,7 +77,7 @@ config = {
             "params": {
                 "use_openvino": True,
                 # ok-script forwards only use_openvino/use_npu here;
-                # onnxocr 0.0.23 therefore keeps its safe AsyncInferQueue default (1).
+                # onnxocr-ppocrv6 0.0.1 therefore keeps its safe AsyncInferQueue default (1).
             },
         },
     },
@@ -162,7 +164,12 @@ config = {
         ["src.tasks.MapCollectionTask", "MapCollectionTask"],
         ["src.tasks.MapTradeTask", "MapTradeTask"],
         ["src.tasks.PVPTask", "PVPTask"],
+        ["src.tasks.EquipmentDailyTask", "EquipmentDailyTask"],
+        ["src.tasks.ActivityDailyTask", "ActivityDailyTask"],
         ["src.tasks.MissionRewardTask", "MissionRewardTask"],
+        ["src.tasks.MailRewardTask", "MailRewardTask"],
+        ["src.tasks.MainStoryFarmTask", "MainStoryFarmTask"],
+        ["src.tasks.GlutalkTask", "GlutalkTask"],
         ["src.tasks.BD2InputTestTask", "BD2MouseClickInputTestTask"],
         ["src.tasks.BD2InputTestTask", "BD2MouseWheelInputTestTask"],
         ["src.tasks.LauncherTask", "LauncherTask"],
@@ -180,3 +187,5 @@ config = {
         "sha256": "98d13a723d28e3c6f41c73869024d6bdbca91239719dad547d994dccf95aa862",
     },
 }
+
+config["ocr"]["home_observer"] = config["ocr"]["default"]

@@ -122,25 +122,29 @@ def _patch_start_cancellation(module) -> None:
     original_do_start = controller_class.do_start
     original_start_device = controller_class.start_device
     original_cancel = controller_class.cancel_start
+    controller_class._bd2_cancel_phase = None
+    controller_class._bd2_cancelled = False
 
     def lock(controller):
         return controller.__dict__.setdefault("_bd2_cancel_lock", threading.RLock())
 
     @wraps(original_start)
-    def start(controller, task=None, exit_after=False):
+    def start(controller, task=None, exit_after=False, **kwargs):
         with lock(controller):
             if controller.starting:
                 return False
+            controller._bd2_start_owner = object()
             controller._bd2_cancel_phase = "queued"
             controller._bd2_cancelled = False
             try:
-                return original_start(controller, task, exit_after)
+                return original_start(controller, task, exit_after, **kwargs)
             except BaseException:
                 controller._bd2_cancel_phase = None
                 raise
 
     @wraps(original_do_start)
-    def do_start(controller, task=None, exit_after=False):
+    def do_start(controller, task=None, exit_after=False, **kwargs):
+        # ok-script 3.0.5+ start() queues do_start(..., from_queue=True).
         with lock(controller):
             cancelled = (getattr(controller, "_bd2_cancel_phase", None) == "queued"
                          and controller._bd2_cancelled)
@@ -150,11 +154,23 @@ def _patch_start_cancellation(module) -> None:
                 controller.starting = False
                 module.communicate.starting_emulator.emit(True, None, 0)
                 return False
-        return original_do_start(controller, task, exit_after)
+            owner = controller._bd2_start_owner = object()
+        try:
+            return original_do_start(controller, task, exit_after, **kwargs)
+        finally:
+            # A dropped queued request bypasses upstream cleanup. On normal exit
+            # upstream clears starting itself, which can already admit a new owner.
+            with lock(controller):
+                if controller._bd2_start_owner is owner:
+                    controller.starting = False
 
     @wraps(original_start_device)
     def start_device(controller, *args, **kwargs):
         with lock(controller):
+            # MCP prepares a device directly, outside do_start's request lifecycle.
+            if not controller.starting and controller._bd2_cancel_phase is None:
+                controller._bd2_cancelled = False
+                controller._cancel_requested.clear()
             controller._bd2_cancel_phase = "waiting"
         try:
             result = original_start_device(controller, *args, **kwargs)
