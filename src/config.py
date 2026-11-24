@@ -19,7 +19,7 @@ from src.process_feature import process_feature
 
 # This marker is replaced with the Git tag when PyAppify creates the update
 # repository.  Source checkouts always read the project version from pyproject.
-version = "v2.1.0"
+version = "v2.1.1"
 
 
 def runtime_version(project_file: Path | None = None) -> str:
