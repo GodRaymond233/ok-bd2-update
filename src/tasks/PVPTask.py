@@ -1,4 +1,5 @@
 import re
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 from time import monotonic
@@ -71,7 +72,7 @@ PVP_AUTO_BATTLE_CLICK_REFERENCE = (2026, 1291)  # 2560×1440 参考
 PVP_STAGE_CLICK_REFERENCE_OFFSET = (0, -75)  # 1920×1080 参考位移
 PVP_BATTLE_START_SCREEN_POINT = (1381, 1061)  # 2560×1440 参考
 PVP_FREE_AP_SWITCH_SCREEN_POINT = (1732, 557)  # 2560×1440 参考
-PVP_FREE_AP_BALANCE_SCREEN_ROI = (2218, 56, 122, 49)
+PVP_FREE_AP_BALANCE_SCREEN_ROI = (2040, 48, 380, 60)  # 2560×1440 参考
 PVP_AUTO_BATTLE_CANCEL_SCREEN_ROI = (970, 1040, 203, 85)
 PVP_FORMATION_LABEL_SCREEN_ROI = (190, 1245, 185, 84)
 PVP_FORMATION_BATTLE_SCREEN_ROI = (2270, 1274, 150, 80)
@@ -425,7 +426,19 @@ class PVPTask(BaseBD2Task):
         timeout: float,
         interval: float = 0.5,
     ) -> bool:
-        """Handle every PVP entry special page before accepting the PVP hub."""
+        return self._wait_for_pvp_hub_clearing_overlays(
+            timeout, phase="PVP 入场", diagnostic="pvp_hub_entry_failed", interval=interval,
+        )
+
+    def _wait_for_pvp_hub_clearing_overlays(
+        self,
+        timeout: float,
+        *,
+        phase: str,
+        diagnostic: str,
+        interval: float = 0.5,
+    ) -> bool:
+        """Clear paired special-page controls before accepting a stable PVP hub."""
         end_at = monotonic() + max(0.0, timeout)
         presses: dict[str, int] = {}
         pressed_at: dict[str, float] = {}
@@ -435,7 +448,7 @@ class PVPTask(BaseBD2Task):
         last_hub_score = -1.0
         hub_candidate_at: float | None = None
         self.info_set(
-            "PVP 入场特殊页面模式",
+            f"{phase}特殊页面模式",
             "赛季奖励、魔兽奖励及升降级",
         )
 
@@ -446,14 +459,14 @@ class PVPTask(BaseBD2Task):
             frame = self.capture_frame()
             boxes = self._pvp_special_page_ocr_boxes(
                 frame,
-                name="PVP 入场特殊页面",
+                name=f"{phase}特殊页面",
             )
             text, action_name, target_box = self._pvp_special_page_action(
                 boxes,
                 allow_season_reward=True,
             )
             last_text = text or last_text
-            self.info_set("PVP 入场特殊页面 OCR", text or "-")
+            self.info_set(f"{phase}特殊页面 OCR", text or "-")
             has_rank_overlay = any(
                 title in self._normalize_text(text) for title in RANK_OVERLAY_TITLES
             )
@@ -472,7 +485,7 @@ class PVPTask(BaseBD2Task):
                     point = self._ocr_box_center(target_box)
                     if point is not None:
                         frame_height, frame_width = frame.shape[:2]
-                        self.info_set("当前阶段", f"处理 PVP 入场{action_name}")
+                        self.info_set("当前阶段", f"处理 {phase}{action_name}")
                         after_sleep = (
                             PVP_SEASON_REWARD_AFTER_CLICK_SECONDS
                             if action_name in ("赛季奖励", FIEND_HUNT_REWARD_TITLE)
@@ -492,6 +505,8 @@ class PVPTask(BaseBD2Task):
                         presses[action_name] = presses.get(action_name, 0) + 1
                         pressed_at[action_name] = now
                         action_count += 1
+                        end_at = max(end_at, monotonic() + max(0.0, timeout))
+                        candidate = None
                         continue
                 # The hub artwork can remain visible behind these overlays. Never
                 # accept its template from a frame that contains a special page.
@@ -521,14 +536,14 @@ class PVPTask(BaseBD2Task):
 
             self.sleep(interval)
 
-        self.info_set("PVP 入场特殊页面 OCR", last_text or "-")
+        self.info_set(f"{phase}特殊页面 OCR", last_text or "-")
         self.info_set("PVP 箱庭", f"{last_hub_score:.3f}")
         self.log_info(
-            "镜中之战：点击 PVP 卡带后未确认进入 PVP 箱庭，"
+            f"镜中之战：{phase}未确认 PVP 箱庭，"
             f"hub={last_hub_score:.3f}, special_page_ocr={last_text or '-'}, "
             f"presses={presses}。"
         )
-        self._save_flow_diagnostic("pvp_hub_entry_failed")
+        self._save_flow_diagnostic(diagnostic)
         return False
 
     def _clear_pvp_hub_notice_if_present(self) -> None:
@@ -686,9 +701,16 @@ class PVPTask(BaseBD2Task):
         previous = None
         for attempt in range(3):
             frame = self.capture_frame()
-            text = normalize_ocr_text(self._ocr_text(frame, name="PVP 免费鸡尾酒余额", roi=roi))
-            values = re.findall(r"(?<![\d/])(\d{1,2})/40(?!\d)", text)
-            balance = int(values[0]) if len(values) == 1 and int(values[0]) <= 40 else None
+            boxes = self._bd2_ocr_boxes(frame, name="PVP 免费鸡尾酒余额", roi=roi)
+            values = []
+            for box in boxes:
+                text = normalize_ocr_text(unicodedata.normalize("NFKC", str(box.name)))
+                for match in re.finditer(r"(?<![\d/])(\d{1,2})/40(?!\d)", text):
+                    value = int(match[1])
+                    # A numeral at the crop edge can be the suffix of a clipped balance.
+                    clipped = match.start() == 0 and box.x < max(2, 0.5 * box.height)
+                    values.append(value if value <= 40 and not clipped else None)
+            balance = values[0] if len(values) == 1 else None
             if balance is not None and balance == previous:
                 return balance
             previous = balance
@@ -1265,9 +1287,9 @@ class PVPTask(BaseBD2Task):
         timeout = float(self.config.get("PVP 返回主页等待秒数", 20.0))
         if self._frame_confirms_home(self.capture_frame(), "PVP 退出前"):
             return True
-        hub = self._wait_for_template(
-            PVP_MEDALS_TEMPLATE, timeout=float(self.config.get("PVP 返回箱庭等待秒数", 10.0)),
-            name="PVP 箱庭",
+        hub = self._wait_for_pvp_hub_clearing_overlays(
+            float(self.config.get("PVP 返回箱庭等待秒数", 10.0)),
+            phase="PVP 退出", diagnostic="pvp_hub_return_failed",
         )
         home = self.prepare_home(
             "PVP 返回主页", timeout=timeout, interval=0.5, recover=False,

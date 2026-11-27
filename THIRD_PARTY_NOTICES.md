@@ -7,7 +7,7 @@ and does not replace the license texts supplied with the specific versions used.
 
 | Project | Use in this project | License / notice | Source |
 |---|---|---|---|
-| ok-script 3.0.10 | Task framework, capture, input, OCR integration, update helpers | ok-script License: Apache License 2.0 as modified by Commons Clause and additional terms. The package's complete notice is preserved in `LICENSES/ok-script-3.0.10.txt`. | https://github.com/ok-oldking/ok-script |
+| ok-script 3.0.14 | Task framework, capture, input, OCR integration, update helpers | ok-script License: Apache License 2.0 as modified by Commons Clause and additional terms. The package's complete notice is preserved in `LICENSES/ok-script-3.0.14.txt`. | https://github.com/ok-oldking/ok-script |
 | ok-script Web runtime (copy) | `src/desktop/okweb` is a copy of the Web runtime of ok-script 2.0.6, which later versions removed; it serves the desktop client | `LICENSES/ok-script-2.0.6.txt` | https://github.com/ok-oldking/ok-script |
 | adbutils | ADB support through ok-script/device workflows | MIT | https://github.com/openatx/adbutils |
 | comtypes | Windows COM support | MIT | https://github.com/enthought/comtypes |
@@ -81,6 +81,27 @@ recipe list screenshot `cooking_list_cn_2k_20261110.jpg` in the same YES-BD2
 repository at commit `4ab3e152e69a675e7e48b8e566244a616dc652bb` under
 the same terms. The recipe priority guide
 image is excerpted from the chart by 西巧克力大道 supplied by the maintainer.
+
+The pass-reward badge templates are cropped from the PC screenshot fixture
+`tests/fixtures/pass/pass_page_badges_fhd.png` in nobell001/YES-BD2
+commit `4ab3e152e69a675e7e48b8e566244a616dc652bb` (GPL-3.0).
+The underlying game art remains property of its rights holders.
+
+`doom_field_swords.png` is a binary recognition mask derived from the PC capture
+`tests/fixtures/doom/field_red_costume_1440_as_1080.png` in nobell001/YES-BD2
+commit `0b58668ce715cd2f38233a9b4ab35563ea40937a` (GPL-3.0).
+`doom_card_cover.png` is the `recognition-assets/template-assets/doom/last_night_card.png`
+recognition template from the same revision. The underlying game art remains
+property of its rights holders.
+
+`tower_cartridge_cover.png` and `tower_level_tick.png` are recognition templates
+from the `evil_castle` assets in the same YES-BD2 revision. `tower_spawn_steps.png`
+and `tower_altar_marker.png` are derived from the PC screenshots
+`field_spawn_2k.jpg` and `field_altar_marker_2k.jpg` in `tests/fixtures/redemption_tower`.
+
+`event_reward_hand.png` is the YES-BD2 recognition template
+`recognition-assets/template-assets/event/reward_hand.png` from commit
+`0b58668ce715cd2f38233a9b4ab35563ea40937a` (GPL-3.0).
 
 ## Game And Platform Materials
 

@@ -6,7 +6,9 @@ no ``quick_hunt_plan`` yet).  The React client is served from ``src/desktop/ui_d
 """
 
 import os
+import sqlite3
 import threading
+from datetime import date
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -41,10 +43,12 @@ from src.desktop.tools import executor_busy, install_tools
 from src.game_path import resolve_game_exe_path, resolve_launcher_exe_path
 from src.task_guides import GUIDES
 from src.tasks.BaseBD2Task import task_info_snapshot
+from src.tasks.CloseGameTask import CloseGameTask
 from src.tasks.DailyBatchTask import RUN_MODE_ALL, RUN_MODE_INCOMPLETE, DailyBatchTask
 from src.tasks.quick_hunt_plan import PLAN_KEY, describe_plan, load_book
 from src.tasks.run_history import RECENT_LIMIT, default_store, run_state
 from src.tasks.today import find_batch, today_summary
+from src.tasks.TradeInventoryTask import read_inventory_report
 from src.tasks.trigger.AutoLoginTask import AutoLoginTask
 from src.ui.hide_config_rows import mark_hidden_config_keys
 from src.window_resolution import (
@@ -412,6 +416,13 @@ def adapt_runtime(runtime, legacy_check=None, starter_wait=None):
                 resuming=task if task is runtime.executor.current_task else None,
                 waits_for_login=getattr(task, "waits_for_login", False),
             )
+            if isinstance(task, CloseGameTask):
+                runtime.executor.acquire_exclusive(task.name)
+                try:
+                    task.run()
+                finally:
+                    runtime.executor.release_exclusive(task.name)
+                return task_payload(task)
             if controller.start(task) is False:
                 raise ValueError("任务未启动，请等待启动流程结束")
             return task_payload(task)
@@ -547,6 +558,8 @@ def adapt_runtime(runtime, legacy_check=None, starter_wait=None):
             "telegram": providers.TelegramBotProvider,
             "wecom": providers.WeComWebhookProvider,
             "qqbot": providers.QQBotProvider,
+            "bark": providers.BarkProvider,
+            "pushplus": providers.PushPlusProvider,
         }[channel]()
         # The providers log the failure and return False.
         if not provider.send(*values, TEST_TITLE, TEST_MESSAGE, []):
@@ -606,7 +619,7 @@ def adapt_runtime(runtime, legacy_check=None, starter_wait=None):
         preferred = manager.get_preferred_device()
         preferred_id = preferred.get("imei") if preferred else None
         ui["devices"] = [device_payload(device, preferred_id) for device in manager.get_devices()]
-        preference = manager.get_preferred_capture()
+        preference = manager.config.get("capture")
         methods = {item["id"] for item in ui["capture_methods"]}
         # None: no method chosen, the device manager tries capture_methods in order.
         ui["capture_preference"] = preference if preference in methods else None
@@ -783,6 +796,13 @@ def create_app(
     @app.get("/api/bd2/today")
     def today():
         return today_summary(runtime.executor)
+
+    @app.get("/api/bd2/trade-inventory")
+    def trade_inventory(day: date | None = None):
+        try:
+            return read_inventory_report(day.isoformat() if day else None)
+        except (OSError, sqlite3.Error) as error:
+            raise HTTPException(503, "库存日报暂时无法读取") from error
 
     @app.post("/api/bd2/daily/start")
     def start_daily(body: dict):
