@@ -156,11 +156,16 @@ def _stock_count(text):
 def parse_stone_rows(boxes) -> tuple[int, ...] | None:
     """Join adjacent OCR fragments within exactly five ordered inventory rows."""
     entries = []
+    nonnumeric_boxes = []
     for box in boxes:
         bounds = _bounds(box)
         text = str(getattr(box, "name", "")).strip()
         if bounds is None or not text:
             return None
+        normalized = unicodedata.normalize("NFKC", text)
+        if not re.search(r"[0-9]", normalized) and not re.fullmatch(r"[,.kKmM万]+", normalized):
+            nonnumeric_boxes.append(bounds)
+            continue
         entries.append((*bounds, text))
     entries.sort(key=lambda entry: entry[1] + entry[3] / 2)
     rows = []
@@ -184,6 +189,15 @@ def parse_stone_rows(boxes) -> tuple[int, ...] | None:
         if previous_bottom is not None and row_top < previous_bottom:
             return None
         previous_bottom = row_bottom
+        # A nearby glyph may be an unread digit, separator or unit of this count.
+        margin = row_bottom - row_top
+        row_left = row[0][0] - margin
+        row_right = max(x + width for x, _, width, _, _ in row) + margin
+        if any(
+            y < row_bottom and y + height > row_top and x <= row_right and x + width >= row_left
+            for x, y, width, height in nonnumeric_boxes
+        ):
+            return None
         for previous, current in zip(row, row[1:]):
             gap = current[0] - previous[0] - previous[2]
             if gap < 0 or gap > max(previous[3], current[3]):

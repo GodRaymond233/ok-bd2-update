@@ -32,9 +32,9 @@ from src.tasks.equipment_daily import (
     SELECTION_BACK_POINT,
     EquipmentScreen,
     RefinementConflict,
-    dismantle_card_selected,
     dismantle_check_point,
     dismantle_grade_points,
+    dismantle_selection_matches,
     equipment_daily_cycle,
     grid_blank_rows,
     refinement_value,
@@ -201,13 +201,29 @@ class EquipmentDailyTask(TaskVisionMixin, BaseBD2Task):
 
     def _scroll_to_bottom(self, screen, is_expected_page):
         stable_frames = 0
+        scrolled = False
         previous = self._grid_sample(screen.frame)
         for _ in range(24):
             rows = grid_blank_rows(screen.frame)
             if rows and rows[-1]:
                 # 可见的最后一行已经是空格子：装备列表到底了（整页空也一样）。
-                return screen
+                if not scrolled:
+                    return screen
+                # ScrollRect 触底可能先过冲再回弹，等网格画面稳定后再返回。
+                for _ in range(4):
+                    self.sleep(0.35)
+                    settled = self._read_equipment()
+                    if not is_expected_page(settled):
+                        return None
+                    current = self._grid_sample(settled.frame)
+                    settled_now = float(np.abs(current - previous).mean()) < 0.7
+                    screen = settled
+                    previous = current
+                    if settled_now:
+                        return screen
+                return None
             self.scroll_client((0.70, 0.62), -4, count=4, after_sleep=0.5)
+            scrolled = True
             screen = self._read_equipment()
             if not is_expected_page(screen):
                 return None
@@ -237,16 +253,19 @@ class EquipmentDailyTask(TaskVisionMixin, BaseBD2Task):
         stable_scrolls = 0
         saw_equipment = False
         for scrolls in range(max_scrolls + 1):
-            grid = self._grid_sample(screen.frame)
-            saw_equipment = saw_equipment or not all(grid_blank_rows(screen.frame))
-            for target in self._grade_points(screen.frame):
+            candidate_frame = screen.frame
+            grid = self._grid_sample(candidate_frame)
+            saw_equipment = saw_equipment or not all(grid_blank_rows(candidate_frame))
+            for target in self._grade_points(candidate_frame):
                 self.operate_click(*target, name="选择一件非 UR 装备", after_sleep=0.45)
                 selected = self._wait_equipment(
                     lambda view: view.inventory == inventory and view.selection_count == 1,
                     timeout=2.5,
                 )
                 if selected is not None:
-                    return selected if dismantle_card_selected(selected.frame, target) else None
+                    if dismantle_selection_matches(candidate_frame, selected.frame, target):
+                        return selected
+                    return None
                 screen = self._read_equipment()
                 if (
                     not unselected_page(screen)
