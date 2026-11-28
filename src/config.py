@@ -20,7 +20,7 @@ from src.telemetry import TELEMETRY_OPTION, TELEMETRY_OPTION_DESCRIPTION
 
 # This marker is replaced with the Git tag when PyAppify creates the update
 # repository.  Source checkouts always read the project version from pyproject.
-version = "v2.2.2"
+version = "v2.2.3"
 
 
 def runtime_version(project_file: Path | None = None) -> str:
